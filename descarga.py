@@ -11,6 +11,7 @@ Uso:
 
 import asyncio
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -150,9 +151,20 @@ def format_size(bytes_: int) -> str:
     return f"{bytes_} B"
 
 
-def progress_factory(prefix: str):
+def _clear_line() -> str:
+    """Devuelve un prefijo que borra toda la línea actual de la terminal.
+
+    Usa el ancho real de la terminal. Útil después de líneas con barra de progreso
+    para que no queden restos al escribir un mensaje más corto.
+    """
+    cols = shutil.get_terminal_size().columns
+    return f"\r{' ' * cols}\r"
+
+
+def progress_factory(prefix: str, show_size: bool = True):
     """Devuelve un callback de progreso que actualiza una línea con el prefijo dado.
 
+    Muestra barra de progreso, porcentaje y (opcionalmente) bytes descargados/total.
     Uso: progress_factory('📷 [  3/80 ] nombre.jpg')(current, total)
     """
     def cb(current: int, total: int):
@@ -162,7 +174,10 @@ def progress_factory(prefix: str):
         blen = 25
         fill = int(blen * current / total)
         bar = "█" * fill + "░" * (blen - fill)
-        print(f"\r{prefix} │{bar}│ {pct:3.0f}%", end="", flush=True)
+        line = f"\r{prefix} │{bar}│ {pct:3.0f}%"
+        if show_size:
+            line += f"  {format_size(current)}/{format_size(total)}"
+        print(line, end="", flush=True)
     return cb
 
 
@@ -395,7 +410,11 @@ async def run(config: dict):
                     if fpath.exists():
                         batch_dup += 1
                         media_en_batch += 1
-                        print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
+                        try:
+                            dup_size = format_size(fpath.stat().st_size)
+                            print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)")
+                        except OSError:
+                            print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
                         continue
 
                     icono = "📷" if msg.photo else "🎬"
@@ -411,23 +430,28 @@ async def run(config: dict):
 
                         if ruta is None:
                             fpath.unlink(missing_ok=True)
-                            print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
+                            print(f"{_clear_line()}{inicio}  ✗ no disponible")
                             batch_err += 1
                             media_en_batch += 1
                             continue
 
                         try:
-                            batch_bytes += fpath.stat().st_size
+                            file_size = fpath.stat().st_size
+                            batch_bytes += file_size
+                            size_str = format_size(file_size)
                         except OSError:
-                            pass
+                            size_str = ""
 
                         batch_ok += 1
                         media_en_batch += 1
-                        print(f"\r{inicio}  ✓{' ' * 30}")
+                        if size_str:
+                            print(f"{_clear_line()}{inicio}  ✓  {size_str}")
+                        else:
+                            print(f"{_clear_line()}{inicio}  ✓")
 
                     except errors.FloodWaitError as e:
                         espera = e.seconds
-                        print(f"\r{inicio}  ⏳ FloodWait {espera}s...")
+                        print(f"{_clear_line()}{inicio}  ⏳ FloodWait {espera}s...")
                         await asyncio.sleep(espera)
                         # Reintento único
                         try:
@@ -436,20 +460,29 @@ async def run(config: dict):
                                 progress_callback=progress_factory(inicio),
                             )
                             if ruta:
+                                try:
+                                    file_size = fpath.stat().st_size
+                                    batch_bytes += file_size
+                                    size_str = format_size(file_size)
+                                except OSError:
+                                    size_str = ""
                                 batch_ok += 1
-                                print(f"\r{inicio}  ✓{' ' * 30}")
+                                if size_str:
+                                    print(f"{_clear_line()}{inicio}  ✓  {size_str}")
+                                else:
+                                    print(f"{_clear_line()}{inicio}  ✓")
                             else:
                                 fpath.unlink(missing_ok=True)
-                                print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
+                                print(f"{_clear_line()}{inicio}  ✗ no disponible")
                                 batch_err += 1
                             media_en_batch += 1
                         except Exception as e2:
-                            print(f"\r{inicio}  ✗ {e2}{' ' * 30}")
+                            print(f"{_clear_line()}{inicio}  ✗ {e2}")
                             batch_err += 1
                             media_en_batch += 1
 
                     except Exception as e:
-                        print(f"\r{inicio}  ✗ {e}{' ' * 30}")
+                        print(f"{_clear_line()}{inicio}  ✗ {e}")
                         batch_err += 1
                         media_en_batch += 1
 
