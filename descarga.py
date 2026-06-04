@@ -15,8 +15,30 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dotenv import load_dotenv
 from telethon import TelegramClient, errors
+
+
+# ===========================================================================
+# .env parser (zero dependencies)
+# ===========================================================================
+
+def _load_dotenv(path: str = ".env") -> None:
+    """Carga variables de entorno desde un archivo .env (formato KEY=VAL)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for linea in f:
+                linea = linea.strip()
+                if not linea or linea.startswith("#") or "=" not in linea:
+                    continue
+                key, _, val = linea.partition("=")
+                key = key.strip()
+                val = val.strip()
+                # Sacar comillas envolventes si las hay
+                if len(val) > 1 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ.setdefault(key, val)
+    except FileNotFoundError:
+        pass  # Sin .env no es error — usará defaults y fallará en validación si faltan vars
 
 
 # ===========================================================================
@@ -309,7 +331,7 @@ async def run(config: dict):
 # ===========================================================================
 
 def main():
-    load_dotenv()  # Cargar .env automáticamente
+    _load_dotenv()  # Cargar .env automáticamente, sin dependencias externas
     config = load_config()
 
     print()

@@ -1,5 +1,4 @@
 # Dependencias del proyecto
 # Instalar con: pip install -r requirements.txt
 
-python-dotenv>=1.0
 telethon>=1.30
