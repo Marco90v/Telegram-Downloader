@@ -260,8 +260,8 @@ SETTINGS_PATH = Path(__file__).parent / "settings.json"
 
 DEFAULT_SETTINGS = {
     "auto_skip_all_dupes": False,       # Si todo el lote ya existe, no preguntar
-    "large_file_threshold_mb": 50,      # Umbral en MB para preguntar
-    "large_file_action": "ask",         # "ask" | "download" (descargar siempre)
+    "large_file_threshold_mb": 50,      # Umbral en MB ("skip" o "ask" ignoran archivos > esto)
+    "large_file_action": "ask",         # "ask" | "download" | "skip"
 }
 
 
@@ -280,7 +280,10 @@ def _load_settings() -> dict:
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_SETTINGS, f, indent=2)
-            print(f"  ✓ Creado settings.json — editálo para personalizar el comportamiento.")
+            print(f"  ✓ Creado settings.json")
+            print(f"    └ Editálo para cambiar el comportamiento sin tocar código.")
+            print(f"    └ Opciones: large_file_action → ask | download | skip")
+            print(f"    └           auto_skip_all_dupes → true | false")
         except OSError as e:
             print(f"  ⚠  No se pudo crear settings.json: {e}")
     return dict(DEFAULT_SETTINGS)
@@ -322,6 +325,13 @@ async def run(config: dict, settings: dict):
 
     await client.start()
     print("  ✓ Conectado a Telegram.\n")
+
+    # ── Mostrar configuración activa ──
+    action_label = {"ask": "preguntar", "download": "siempre", "skip": "omitir"}.get(
+        settings["large_file_action"], settings["large_file_action"])
+    print(f"  ⚙  Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}"
+          f"  |  Archivos >{settings['large_file_threshold_mb']}MB: {action_label}")
+    print()
 
     chat_id = config["TELEGRAM_TARGET_CHAT"]
 
@@ -474,15 +484,20 @@ async def run(config: dict, settings: dict):
                     # ── Preguntar si es muy pesado ──
                     _fsize = _media_size(msg)
                     _thr = settings["large_file_threshold_mb"] * 1024 * 1024
-                    if (settings["large_file_action"] == "ask"
-                        and _fsize is not None
-                        and _fsize > _thr
-                        and _thr > 0):
+                    _es_grande = _fsize is not None and _fsize > _thr and _thr > 0
+
+                    if _es_grande and settings["large_file_action"] == "skip":
+                        batch_skip += 1
+                        media_en_batch += 1
+                        print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({format_size(_fsize)})  (omitido por tamaño)")
+                        continue
+
+                    if _es_grande and settings["large_file_action"] == "ask":
                         if not ask_bool(f"{inicio}  ({format_size(_fsize)})  ¿Descargar? (s/n): "):
                             batch_skip += 1
                             media_en_batch += 1
                             continue
-                        # Si dijo que sí → va directo a descargar (el progress bar pisa la línea)
+                        # Dijo que sí → va directo a descargar (progress bar pisa la línea)
                     else:
                         sys.stdout.write(inicio)
                         sys.stdout.flush()
