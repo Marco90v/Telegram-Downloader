@@ -1,0 +1,42 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Distribution / packaging ---
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# --- Virtual environments ---
+venv/
+.env/
+env/
+ENV/
+venv.bak/
+env.bak/
+
+# --- IDE / Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Environment variables (CONTIENEN CREDENCIALES) ---
+.env
+.env.local
+.env.*.local
+
+# --- Telegram session files (contienen auth keys — NUNCA committear) ---
+*.session
+*.session-journal
+
+# --- Descargas locales ---
+descargas/
+downloads/
