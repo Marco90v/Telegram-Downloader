@@ -94,9 +94,9 @@ def ask_bool(prompt: str) -> bool:
         r = input(prompt).strip().lower()
         if r in ("s", "si", "sí", "y", "yes"):
             return True
-        if r in ("n", "no", "not"):
+        if r in ("n", "no", "not", "q"):
             return False
-        print("  Respondé 's' para sí o 'n' para no.")
+        print("  Respondé 's' para sí, 'n' para no, 'q' para salir.")
 
 
 def ask_date_filter():
@@ -130,7 +130,7 @@ def ask_continue(total_downloaded: int) -> bool:
     """Pregunta si seguir con el siguiente lote."""
     print(f"\n  ─────────────────────────────────────────────")
     print(f"  Descargados hasta ahora: {total_downloaded} archivos")
-    return ask_bool("  ¿Seguir con los siguientes mensajes? (s/n): ")
+    return ask_bool("  ¿Seguir? (s/n/q): ")
 
 
 # ===========================================================================
@@ -148,17 +148,62 @@ def format_size(bytes_: int) -> str:
     return f"{bytes_} B"
 
 
-def progress_callback(current: int, total: int):
-    """Callback de progreso para download_media."""
-    if total <= 0:
-        return
-    percent = current / total * 100
-    bar_len = 30
-    filled = int(bar_len * current // total)
-    bar = "█" * filled + "░" * (bar_len - filled)
-    cur_s = format_size(current).rjust(10)
-    tot_s = format_size(total).ljust(10)
-    print(f"\r  │{bar}│ {cur_s} / {tot_s} ({percent:3.0f}%)", end="", flush=True)
+def progress_factory(prefix: str):
+    """Devuelve un callback de progreso que actualiza una línea con el prefijo dado.
+
+    Uso: progress_factory('📷 [  3/80 ] nombre.jpg')(current, total)
+    """
+    def cb(current: int, total: int):
+        if total <= 0:
+            return
+        pct = current / total * 100
+        blen = 25
+        fill = int(blen * current / total)
+        bar = "█" * fill + "░" * (blen - fill)
+        print(f"\r{prefix} │{bar}│ {pct:3.0f}%", end="", flush=True)
+    return cb
+
+
+def _media_ext(msg) -> str:
+    """Determina la extensión del archivo multimedia de un mensaje."""
+    if msg.photo and getattr(msg.photo, 'ext', None):
+        return str(msg.photo.ext)
+    if msg.video and getattr(msg.video, 'ext', None):
+        return str(msg.video.ext)
+    # Fallback por mime type
+    doc = getattr(msg, 'document', None)
+    if doc and doc.mime_type:
+        mime_map = {
+            'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+            'video/mp4': '.mp4', 'video/x-matroska': '.mkv', 'video/avi': '.avi',
+        }
+        return mime_map.get(doc.mime_type, '.bin')
+    return '.jpg'
+
+
+def _media_path(msg, output_dir: Path) -> Path:
+    """Path único y determinístico para el multimedia de un mensaje.
+
+    El nombre incluye fecha + message_id para evitar duplicados y
+    ordenar cronológicamente.
+    """
+    fecha = msg.date.strftime('%Y%m%d') if msg.date else '00000000'
+    return output_dir / f"{fecha}_{msg.id}{_media_ext(msg)}"
+
+
+def _chat_folder_name(entity) -> str:
+    """Deriva un nombre de carpeta legible y seguro desde la entidad del chat."""
+    name = None
+    if hasattr(entity, 'title') and entity.title:
+        name = entity.title
+    elif hasattr(entity, 'username') and entity.username:
+        name = entity.username
+    else:
+        name = f"chat_{entity.id}" if hasattr(entity, 'id') else "desconocido"
+
+    # Solo caracteres seguros para sistema de archivos
+    safe = "".join(c if c.isalnum() or c in ' _-.' else '_' for c in name)
+    return safe.strip().strip('.')[:60] or "telegram_chat"
 
 
 def is_media_wanted(msg) -> bool:
@@ -205,8 +250,16 @@ async def run(config: dict):
         await client.disconnect()
         return
 
+    # ── Subcarpeta por chat ──
+    chat_folder = _chat_folder_name(entity)
+    output_dir = Path(config["OUTPUT_DIR"]) / chat_folder
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  Chat:         {chat_folder}")
+    print(f"  Guardando en: {output_dir}/\n")
+
     # Estadísticas
     total_ok = 0
+    total_dup = 0
     total_err = 0
     total_bytes = 0
     batch_num = 0
@@ -219,6 +272,7 @@ async def run(config: dict):
         while seguir:
             batch_num += 1
             batch_ok = 0
+            batch_dup = 0
             batch_err = 0
             batch_bytes = 0
 
@@ -264,58 +318,81 @@ async def run(config: dict):
                 print(f"  → {len(pendientes)} archivo(s) para descargar.\n")
 
             # ---- Descargar ----
-            for m in pendientes:
+            n = len(pendientes)
+            w = len(str(n))  # padding para el contador
+
+            for i, m in enumerate(pendientes, start=1):
+                fpath = _media_path(m, output_dir)
+
+                # ── Saltear duplicados ──
+                if fpath.exists():
+                    batch_dup += 1
+                    print(f"  ⏭ [{i:>{w}}/{n}] {fpath.name}  (ya existe)")
+                    continue
+
+                icono = "📷" if m.photo else "🎬"
+                # Mostrar inicio sin barra (la pone el callback)
+                inicio = f"  {icono} [{i:>{w}}/{n}] {fpath.name}"
+                sys.stdout.write(inicio)
+                sys.stdout.flush()
+
                 try:
                     ruta = await client.download_media(
                         m,
-                        file=config["OUTPUT_DIR"],
-                        progress_callback=progress_callback,
+                        file=str(fpath),
+                        progress_callback=progress_factory(inicio),
                     )
-                    print()  # salir de la línea de progreso
 
                     if ruta is None:
-                        print(f"  ⚠  Mensaje {m.id}: download devolvió None (archivo no disponible)")
+                        # Limpiar posible archivo parcial
+                        fpath.unlink(missing_ok=True)
+                        print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
                         batch_err += 1
                         continue
 
                     try:
-                        batch_bytes += Path(ruta).stat().st_size
+                        batch_bytes += fpath.stat().st_size
                     except OSError:
                         pass
 
                     batch_ok += 1
-                    icono = "📷" if m.photo else "🎬"
-                    print(f"  {icono} {m.id:>8} → {Path(ruta).name}")
+                    print(f"\r{inicio}  ✓{' ' * 30}")
 
                 except errors.FloodWaitError as e:
                     espera = e.seconds
-                    print(f"\n  ⚠  Límite de requests. Esperar {espera}s...")
+                    print(f"\r{inicio}  ⏳ FloodWait {espera}s...")
                     await asyncio.sleep(espera)
                     # Reintento único
                     try:
-                        ruta = await client.download_media(m, file=config["OUTPUT_DIR"])
-                        print()
+                        ruta = await client.download_media(
+                            m, file=str(fpath),
+                            progress_callback=progress_factory(inicio),
+                        )
                         if ruta:
                             batch_ok += 1
-                            icono = "📷" if m.photo else "🎬"
-                            print(f"  {icono} {m.id:>8} → {Path(ruta).name}")
+                            print(f"\r{inicio}  ✓{' ' * 30}")
                         else:
+                            fpath.unlink(missing_ok=True)
+                            print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
                             batch_err += 1
                     except Exception as e2:
-                        print(f"  ✗ Mensaje {m.id}: error tras espera: {e2}")
+                        print(f"\r{inicio}  ✗ {e2}{' ' * 30}")
                         batch_err += 1
 
                 except Exception as e:
-                    print(f"\n  ✗ Mensaje {m.id}: {e}")
+                    print(f"\r{inicio}  ✗ {e}{' ' * 30}")
                     batch_err += 1
 
             # ---- Resumen del lote ----
             total_ok += batch_ok
+            total_dup += batch_dup
             total_err += batch_err
             total_bytes += batch_bytes
 
             print(f"\n  ── Lote {batch_num} ──────────────────")
             print(f"     Descargados: {batch_ok}")
+            if batch_dup:
+                print(f"     Ya tenías:   {batch_dup}")
             if batch_err:
                 print(f"     Errores:     {batch_err}")
             if batch_bytes:
@@ -333,7 +410,7 @@ async def run(config: dict):
                 seguir = ask_continue(total_ok)
 
     except KeyboardInterrupt:
-        print("\n\n  ⚑  Interrumpido por el usuario.")
+        print("\n  ⚑  Interrumpido.")
     finally:
         await client.disconnect()
 
@@ -341,11 +418,13 @@ async def run(config: dict):
     print(f"\n  {'═' * 46}")
     print(f"  DESCARGA FINALIZADA")
     print(f"  Archivos descargados: {total_ok}")
+    if total_dup:
+        print(f"  Ya existían:          {total_dup}")
     if total_err:
         print(f"  Errores:              {total_err}")
     if total_bytes:
         print(f"  Tamaño total:         {format_size(total_bytes)}")
-    print(f"  Guardado en:          {config['OUTPUT_DIR']}")
+    print(f"  Guardado en:          {output_dir}/")
     print(f"  {'═' * 46}\n")
 
 
@@ -363,7 +442,7 @@ def main():
     print("  ╚═══════════════════════════════════════════╝")
     print()
     print(f"  Chat destino:  {config['TELEGRAM_TARGET_CHAT']}")
-    print(f"  Directorio:    {config['OUTPUT_DIR']}")
+    print(f"  Carpeta base:  {config['OUTPUT_DIR']}/")
     print(f"  Lote de:       {config['BATCH_SIZE']} mensajes")
     print()
 
@@ -378,7 +457,10 @@ def main():
         print(f"    └ Hasta: {until.date()}")
     print()
 
-    asyncio.run(run(config))
+    try:
+        asyncio.run(run(config))
+    except KeyboardInterrupt:
+        print("\n  ⚑  Interrumpido.")
 
 
 if __name__ == "__main__":
