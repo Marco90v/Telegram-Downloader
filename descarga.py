@@ -47,13 +47,9 @@ def _load_dotenv(path: str = ".env") -> None:
 
 def load_config() -> dict:
     """Carga y valida configuración desde variables de entorno."""
-    required = {
-        "TELEGRAM_API_ID": int,
-        "TELEGRAM_API_HASH": str,
-        "TELEGRAM_TARGET_CHAT": int,
-    }
     config = {}
-    for key, cast in required.items():
+    # API_ID y API_HASH: chequeo estricto
+    for key, cast in [("TELEGRAM_API_ID", int), ("TELEGRAM_API_HASH", str)]:
         value = os.getenv(key)
         if not value:
             print(f"  ERROR: Falta la variable de entorno {key}. Revisá el archivo .env")
@@ -63,6 +59,17 @@ def load_config() -> dict:
         except (ValueError, TypeError):
             print(f"  ERROR: {key} tiene un valor inválido: {value!r}")
             sys.exit(1)
+
+    # TARGET_CHAT: acepta ID numérico (int), username (str) o link (str)
+    raw = os.getenv("TELEGRAM_TARGET_CHAT", "").strip()
+    if not raw:
+        print("  ERROR: Falta la variable de entorno TELEGRAM_TARGET_CHAT. Revisá el archivo .env")
+        sys.exit(1)
+    # Intentar convertir a int; si falla, usar como string (username/link)
+    try:
+        config["TELEGRAM_TARGET_CHAT"] = int(raw)
+    except ValueError:
+        config["TELEGRAM_TARGET_CHAT"] = raw
 
     config["SESSION_NAME"] = os.getenv("TELEGRAM_SESSION_NAME", "sesion_telegram")
     config["OUTPUT_DIR"] = os.path.expanduser(
@@ -174,11 +181,27 @@ async def run(config: dict):
     await client.start()
     print("  ✓ Conectado a Telegram.\n")
 
+    chat_id = config["TELEGRAM_TARGET_CHAT"]
+
+    # Intentar resolver el chat. Si falla, probar con prefijo -100
+    # (canales/supergrupos necesitan -100 delante del ID numérico).
     try:
-        entity = await client.get_entity(config["TELEGRAM_TARGET_CHAT"])
-    except ValueError as e:
-        print(f"  ERROR: No se pudo resolver el chat {config['TELEGRAM_TARGET_CHAT']}: {e}")
-        print("  Asegurate de que el ID sea correcto y que la sesión tenga acceso.")
+        entity = await client.get_entity(chat_id)
+    except Exception:
+        if isinstance(chat_id, int) and chat_id < 0 and not str(chat_id).startswith("-100"):
+            try:
+                entity = await client.get_entity(int(f"-100{abs(chat_id)}"))
+            except Exception:
+                entity = None
+        else:
+            entity = None
+
+    if entity is None:
+        print(f"  ERROR: No se pudo resolver el chat {chat_id}.")
+        print("  Consejos:")
+        print("    - Si es un grupo/canal público, usá el username (sin @) en TELEGRAM_TARGET_CHAT")
+        print("    - Si es privado, usá el invite link completo (t.me/joinchat/...)")
+        print("    - La sesión tiene que ser miembro del chat")
         await client.disconnect()
         return
 
