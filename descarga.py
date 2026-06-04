@@ -229,8 +229,15 @@ async def _count_media(client, entity):
         videos = await client(SearchRequest(
             peer=entity, q='', filter=InputMessagesFilterVideo(), limit=1,
         ))
-        return (getattr(fotos, 'total', 0) or 0,
-                getattr(videos, 'total', 0) or 0)
+        # SearchRequest devuelve .count en la mayoría de los casos;
+        # .total es alternativa para get_messages.
+        total_fotos = getattr(fotos, 'count', None)
+        if total_fotos is None:
+            total_fotos = getattr(fotos, 'total', 0) or 0
+        total_videos = getattr(videos, 'count', None)
+        if total_videos is None:
+            total_videos = getattr(videos, 'total', 0) or 0
+        return total_fotos, total_videos
     except Exception:
         return None, None
 
@@ -276,7 +283,21 @@ async def run(config: dict):
 
     # ── Subcarpeta por chat ──
     chat_folder = _chat_folder_name(entity)
-    output_dir = Path(config["OUTPUT_DIR"]) / chat_folder
+
+    # Detectar si es un sub-grupo vinculado a un canal (discussion group)
+    parent_folder = None
+    linked_id = getattr(entity, 'linked_chat_id', None)
+    if linked_id:
+        try:
+            parent_entity = await client.get_entity(linked_id)
+            parent_folder = _chat_folder_name(parent_entity)
+        except Exception:
+            pass
+
+    if parent_folder and parent_folder != chat_folder:
+        output_dir = Path(config["OUTPUT_DIR"]) / parent_folder / chat_folder
+    else:
+        output_dir = Path(config["OUTPUT_DIR"]) / chat_folder
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Contar multimedia disponible ──
@@ -284,7 +305,10 @@ async def run(config: dict):
 
     # ── Banner enriquecido ──
     print(f"\n  {'═' * 46}")
-    print(f"  Chat:         {chat_folder}")
+    if parent_folder and parent_folder != chat_folder:
+        print(f"  Chat:         {parent_folder} / {chat_folder}")
+    else:
+        print(f"  Chat:         {chat_folder}")
     print(f"  Contenido:    {_fmt_count(fotos)} fotos · {_fmt_count(videos)} videos")
     if fotos is not None and videos is not None:
         total_media = fotos + videos
