@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from telethon import TelegramClient, errors
+from telethon.tl.functions.messages import SearchRequest
+from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo
 
 
 # ===========================================================================
@@ -211,12 +213,34 @@ def is_media_wanted(msg) -> bool:
     return bool(msg.photo) or bool(msg.video)
 
 
+def _fmt_count(n: int | None) -> str:
+    """Formatea un contador o '?' si es None."""
+    if n is None:
+        return "?"
+    return f"{n:,}"
+
+
+async def _count_media(client, entity):
+    """Cuenta fotos y videos via SearchRequest server-side (sin descargar nada)."""
+    try:
+        fotos = await client(SearchRequest(
+            peer=entity, q='', filter=InputMessagesFilterPhotos(), limit=1,
+        ))
+        videos = await client(SearchRequest(
+            peer=entity, q='', filter=InputMessagesFilterVideo(), limit=1,
+        ))
+        return (getattr(fotos, 'total', 0) or 0,
+                getattr(videos, 'total', 0) or 0)
+    except Exception:
+        return None, None
+
+
 # ===========================================================================
 # Lógica de descarga
 # ===========================================================================
 
 async def run(config: dict):
-    """Ciclo principal de descarga por lotes."""
+    """Ciclo principal de descarga por lotes adaptativos."""
     client = TelegramClient(
         config["SESSION_NAME"],
         config["TELEGRAM_API_ID"],
@@ -254,14 +278,27 @@ async def run(config: dict):
     chat_folder = _chat_folder_name(entity)
     output_dir = Path(config["OUTPUT_DIR"]) / chat_folder
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Contar multimedia disponible ──
+    fotos, videos = await _count_media(client, entity)
+
+    # ── Banner enriquecido ──
+    print(f"\n  {'═' * 46}")
     print(f"  Chat:         {chat_folder}")
+    print(f"  Contenido:    {_fmt_count(fotos)} fotos · {_fmt_count(videos)} videos")
+    if fotos is not None and videos is not None:
+        total_media = fotos + videos
+        print(f"  Total:        {total_media:,} archivos multimedia")
+    print(f"  Lote de:      {config['BATCH_SIZE']} archivos")
     print(f"  Guardando en: {output_dir}/\n")
 
-    # Estadísticas
-    total_ok = 0
-    total_dup = 0
-    total_err = 0
-    total_bytes = 0
+    if not ask_bool("  ¿Empezamos? (s/n/q): "):
+        print("  ⚐  Omitido por el usuario.\n")
+        await client.disconnect()
+        return
+
+    # ── Estado ──
+    total_ok = total_dup = total_err = total_bytes = 0
     batch_num = 0
     offset_id = 0
     since = config.get("_since")
@@ -271,119 +308,133 @@ async def run(config: dict):
     try:
         while seguir:
             batch_num += 1
-            batch_ok = 0
-            batch_dup = 0
-            batch_err = 0
-            batch_bytes = 0
-
-            print(f"  {'─' * 46}")
-            print(f"  Lote {batch_num} — pidiendo {config['BATCH_SIZE']} mensajes...")
-
-            # ---- Obtener lote ----
-            kwargs = dict(limit=config["BATCH_SIZE"])
-            if offset_id:
-                kwargs["offset_id"] = offset_id
-            if until:
-                kwargs["offset_date"] = until
-
-            try:
-                mensajes = await client.get_messages(entity, **kwargs)
-            except errors.FloodWaitError as e:
-                espera = e.seconds
-                print(f"  ⚠  Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)...")
-                await asyncio.sleep(espera)
-                batch_num -= 1  # no contar como lote
-                continue
-            except Exception as e:
-                print(f"  ✗ Error al obtener mensajes: {e}")
-                break
-
-            if not mensajes:
-                print("  ✓ No hay más mensajes.")
-                break
-
-            # ---- Filtrar ----
-            pendientes = []
+            batch_ok = batch_dup = batch_err = batch_bytes = 0
+            media_en_batch = 0          # multimedia procesados en este lote
             llegue_al_inicio = False
-            for m in mensajes:
-                if since and m.date.replace(tzinfo=timezone.utc) < since:
-                    llegue_al_inicio = True
-                    break
-                if is_media_wanted(m):
-                    pendientes.append(m)
 
-            if not pendientes:
-                print("  → Sin fotos ni videos en este lote.")
-            else:
-                print(f"  → {len(pendientes)} archivo(s) para descargar.\n")
+            print(f"\n  {'─' * 46}")
+            print(f"  Lote {batch_num} — juntando {config['BATCH_SIZE']} archivos multimedia...")
 
-            # ---- Descargar ----
-            n = len(pendientes)
-            w = len(str(n))  # padding para el contador
+            # ── Sub-lotes adaptativos ──
+            while media_en_batch < config['BATCH_SIZE']:
+                faltan = config['BATCH_SIZE'] - media_en_batch
+                pedir = min(100, faltan)
 
-            for i, m in enumerate(pendientes, start=1):
-                fpath = _media_path(m, output_dir)
+                if media_en_batch > 0:
+                    print(f"  → Acumulando: {media_en_batch}/{config['BATCH_SIZE']}, "
+                          f"faltan {faltan}, pidiendo {pedir} más…")
 
-                # ── Saltear duplicados ──
-                if fpath.exists():
-                    batch_dup += 1
-                    print(f"  ⏭ [{i:>{w}}/{n}] {fpath.name}  (ya existe)")
-                    continue
-
-                icono = "📷" if m.photo else "🎬"
-                # Mostrar inicio sin barra (la pone el callback)
-                inicio = f"  {icono} [{i:>{w}}/{n}] {fpath.name}"
-                sys.stdout.write(inicio)
-                sys.stdout.flush()
+                kwargs = dict(limit=pedir)
+                if offset_id:
+                    kwargs["offset_id"] = offset_id
+                if until:
+                    kwargs["offset_date"] = until
 
                 try:
-                    ruta = await client.download_media(
-                        m,
-                        file=str(fpath),
-                        progress_callback=progress_factory(inicio),
-                    )
-
-                    if ruta is None:
-                        # Limpiar posible archivo parcial
-                        fpath.unlink(missing_ok=True)
-                        print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
-                        batch_err += 1
-                        continue
-
-                    try:
-                        batch_bytes += fpath.stat().st_size
-                    except OSError:
-                        pass
-
-                    batch_ok += 1
-                    print(f"\r{inicio}  ✓{' ' * 30}")
-
+                    mensajes = await client.get_messages(entity, **kwargs)
                 except errors.FloodWaitError as e:
                     espera = e.seconds
-                    print(f"\r{inicio}  ⏳ FloodWait {espera}s...")
+                    print(f"  ⚠  Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)...")
                     await asyncio.sleep(espera)
-                    # Reintento único
+                    continue
+                except Exception as e:
+                    print(f"  ✗ Error al obtener mensajes: {e}")
+                    seguir = False
+                    break
+
+                if not mensajes:
+                    break
+
+                # ── Filtrar multimedia ──
+                pendientes = []
+                for m in mensajes:
+                    if since and m.date.replace(tzinfo=timezone.utc) < since:
+                        llegue_al_inicio = True
+                        break
+                    if is_media_wanted(m):
+                        pendientes.append(m)
+
+                if not pendientes:
+                    offset_id = mensajes[-1].id
+                    if llegue_al_inicio:
+                        break
+                    continue
+
+                # ── Descargar cada uno (contador global en el lote) ──
+                w = len(str(config['BATCH_SIZE']))
+
+                for msg in pendientes:
+                    fpath = _media_path(msg, output_dir)
+                    pos = media_en_batch + 1   # posición global en el lote
+
+                    # ── Duplicado ──
+                    if fpath.exists():
+                        batch_dup += 1
+                        media_en_batch += 1
+                        print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
+                        continue
+
+                    icono = "📷" if msg.photo else "🎬"
+                    inicio = f"  {icono} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}"
+                    sys.stdout.write(inicio)
+                    sys.stdout.flush()
+
                     try:
                         ruta = await client.download_media(
-                            m, file=str(fpath),
+                            msg, file=str(fpath),
                             progress_callback=progress_factory(inicio),
                         )
-                        if ruta:
-                            batch_ok += 1
-                            print(f"\r{inicio}  ✓{' ' * 30}")
-                        else:
+
+                        if ruta is None:
                             fpath.unlink(missing_ok=True)
                             print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
                             batch_err += 1
-                    except Exception as e2:
-                        print(f"\r{inicio}  ✗ {e2}{' ' * 30}")
+                            media_en_batch += 1
+                            continue
+
+                        try:
+                            batch_bytes += fpath.stat().st_size
+                        except OSError:
+                            pass
+
+                        batch_ok += 1
+                        media_en_batch += 1
+                        print(f"\r{inicio}  ✓{' ' * 30}")
+
+                    except errors.FloodWaitError as e:
+                        espera = e.seconds
+                        print(f"\r{inicio}  ⏳ FloodWait {espera}s...")
+                        await asyncio.sleep(espera)
+                        # Reintento único
+                        try:
+                            ruta = await client.download_media(
+                                msg, file=str(fpath),
+                                progress_callback=progress_factory(inicio),
+                            )
+                            if ruta:
+                                batch_ok += 1
+                                print(f"\r{inicio}  ✓{' ' * 30}")
+                            else:
+                                fpath.unlink(missing_ok=True)
+                                print(f"\r{inicio}  ✗ no disponible{' ' * 30}")
+                                batch_err += 1
+                            media_en_batch += 1
+                        except Exception as e2:
+                            print(f"\r{inicio}  ✗ {e2}{' ' * 30}")
+                            batch_err += 1
+                            media_en_batch += 1
+
+                    except Exception as e:
+                        print(f"\r{inicio}  ✗ {e}{' ' * 30}")
                         batch_err += 1
+                        media_en_batch += 1
 
-                except Exception as e:
-                    print(f"\r{inicio}  ✗ {e}{' ' * 30}")
-                    batch_err += 1
+                # Preparar siguiente sub-lote
+                offset_id = mensajes[-1].id
+                if llegue_al_inicio:
+                    break
 
-            # ---- Resumen del lote ----
+            # ── Resumen del lote ──
             total_ok += batch_ok
             total_dup += batch_dup
             total_err += batch_err
@@ -398,34 +449,41 @@ async def run(config: dict):
             if batch_bytes:
                 print(f"     Tamaño:      {format_size(batch_bytes)}")
 
-            # ---- Condiciones de salida ----
+            # ── Decidir si seguimos ──
+            if not seguir:
+                break
+
             if llegue_al_inicio:
                 print("\n  ✓ Se alcanzó la fecha de inicio (no hay mensajes más viejos).")
                 break
 
-            # Preparar siguiente lote
-            offset_id = mensajes[-1].id
+            if not mensajes:
+                if media_en_batch == 0:
+                    print("  ✓ No hay más mensajes.")
+                else:
+                    print(f"  ✓ Solo quedaban {media_en_batch} archivos multimedia.")
+                break
 
-            if pendientes:
-                seguir = ask_continue(total_ok)
+            seguir = ask_continue(total_ok)
 
     except KeyboardInterrupt:
         print("\n  ⚑  Interrumpido.")
     finally:
         await client.disconnect()
 
-    # ---- Resumen final ----
-    print(f"\n  {'═' * 46}")
-    print(f"  DESCARGA FINALIZADA")
-    print(f"  Archivos descargados: {total_ok}")
-    if total_dup:
-        print(f"  Ya existían:          {total_dup}")
-    if total_err:
-        print(f"  Errores:              {total_err}")
-    if total_bytes:
-        print(f"  Tamaño total:         {format_size(total_bytes)}")
-    print(f"  Guardado en:          {output_dir}/")
-    print(f"  {'═' * 46}\n")
+    # ── Resumen final (solo si hubo actividad) ──
+    if total_ok or total_dup or total_err:
+        print(f"\n  {'═' * 46}")
+        print(f"  DESCARGA FINALIZADA")
+        print(f"  Archivos descargados: {total_ok}")
+        if total_dup:
+            print(f"  Ya existían:          {total_dup}")
+        if total_err:
+            print(f"  Errores:              {total_err}")
+        if total_bytes:
+            print(f"  Tamaño total:         {format_size(total_bytes)}")
+        print(f"  Guardado en:          {output_dir}/")
+        print(f"  {'═' * 46}\n")
 
 
 # ===========================================================================
@@ -440,10 +498,6 @@ def main():
     print("  ╔═══════════════════════════════════════════╗")
     print("  ║    Descargador Masivo de Telegram         ║")
     print("  ╚═══════════════════════════════════════════╝")
-    print()
-    print(f"  Chat destino:  {config['TELEGRAM_TARGET_CHAT']}")
-    print(f"  Carpeta base:  {config['OUTPUT_DIR']}/")
-    print(f"  Lote de:       {config['BATCH_SIZE']} mensajes")
     print()
 
     os.makedirs(config["OUTPUT_DIR"], exist_ok=True)
