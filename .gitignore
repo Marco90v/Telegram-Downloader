@@ -40,3 +40,6 @@ env.bak/
 # --- Descargas locales ---
 descargas/
 downloads/
+
+# --- Configuración personal del usuario ---
+settings.json

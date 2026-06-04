@@ -10,6 +10,7 @@ Uso:
 """
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -235,6 +236,56 @@ def _fmt_count(n: int | None) -> str:
     return f"{n:,}"
 
 
+def _media_size(msg) -> int | None:
+    """Estima el tamaño en bytes del contenido multimedia sin descargarlo.
+
+    Para videos/documentos usa document.size (exacto).
+    Para fotos usa el tamaño del tamaño completo (aproximado).
+    """
+    if msg.document:
+        return msg.document.size
+    if msg.photo and msg.photo.sizes:
+        # El último size suele ser la resolución completa
+        biggest = msg.photo.sizes[-1]
+        if hasattr(biggest, 'size'):
+            return biggest.size
+    return None
+
+
+# ===========================================================================
+# Config persistente (settings.json)
+# ===========================================================================
+
+SETTINGS_PATH = Path(__file__).parent / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "auto_skip_all_dupes": False,       # Si todo el lote ya existe, no preguntar
+    "large_file_threshold_mb": 50,      # Umbral en MB para preguntar
+    "large_file_action": "ask",         # "ask" | "download" (descargar siempre)
+}
+
+
+def _load_settings() -> dict:
+    """Carga settings.json o crea uno con valores por defecto."""
+    if SETTINGS_PATH.exists():
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                user = json.load(f)
+            merged = dict(DEFAULT_SETTINGS)
+            merged.update(user)  # lo que puso el usuario pisa defaults
+            return merged
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  ⚠  settings.json inválido ({e}), se usan valores por defecto.")
+    else:
+        try:
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_SETTINGS, f, indent=2)
+            print(f"  ✓ Creado settings.json — editálo para personalizar el comportamiento.")
+        except OSError as e:
+            print(f"  ⚠  No se pudo crear settings.json: {e}")
+    return dict(DEFAULT_SETTINGS)
+
+
 async def _count_media(client, entity):
     """Cuenta fotos y videos via SearchRequest server-side (sin descargar nada)."""
     try:
@@ -261,7 +312,7 @@ async def _count_media(client, entity):
 # Lógica de descarga
 # ===========================================================================
 
-async def run(config: dict):
+async def run(config: dict, settings: dict):
     """Ciclo principal de descarga por lotes adaptativos."""
     client = TelegramClient(
         config["SESSION_NAME"],
@@ -337,7 +388,7 @@ async def run(config: dict):
         return
 
     # ── Estado ──
-    total_ok = total_dup = total_err = total_bytes = 0
+    total_ok = total_dup = total_err = total_bytes = total_skip = 0
     batch_num = 0
     offset_id = 0
     since = config.get("_since")
@@ -347,7 +398,7 @@ async def run(config: dict):
     try:
         while seguir:
             batch_num += 1
-            batch_ok = batch_dup = batch_err = batch_bytes = 0
+            batch_ok = batch_dup = batch_err = batch_bytes = batch_skip = 0
             media_en_batch = 0          # multimedia procesados en este lote
             llegue_al_inicio = False
 
@@ -419,8 +470,22 @@ async def run(config: dict):
 
                     icono = "📷" if msg.photo else "🎬"
                     inicio = f"  {icono} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}"
-                    sys.stdout.write(inicio)
-                    sys.stdout.flush()
+
+                    # ── Preguntar si es muy pesado ──
+                    _fsize = _media_size(msg)
+                    _thr = settings["large_file_threshold_mb"] * 1024 * 1024
+                    if (settings["large_file_action"] == "ask"
+                        and _fsize is not None
+                        and _fsize > _thr
+                        and _thr > 0):
+                        if not ask_bool(f"{inicio}  ({format_size(_fsize)})  ¿Descargar? (s/n): "):
+                            batch_skip += 1
+                            media_en_batch += 1
+                            continue
+                        # Si dijo que sí → va directo a descargar (el progress bar pisa la línea)
+                    else:
+                        sys.stdout.write(inicio)
+                        sys.stdout.flush()
 
                     try:
                         ruta = await client.download_media(
@@ -495,10 +560,13 @@ async def run(config: dict):
             total_ok += batch_ok
             total_dup += batch_dup
             total_err += batch_err
+            total_skip += batch_skip
             total_bytes += batch_bytes
 
             print(f"\n  ── Lote {batch_num} ──────────────────")
             print(f"     Descargados: {batch_ok}")
+            if batch_skip:
+                print(f"     Omitidos:    {batch_skip}  (muy pesado)")
             if batch_dup:
                 print(f"     Ya tenías:   {batch_dup}")
             if batch_err:
@@ -521,6 +589,15 @@ async def run(config: dict):
                     print(f"  ✓ Solo quedaban {media_en_batch} archivos multimedia.")
                 break
 
+            # ── Auto-skip si todo el lote ya existía ──
+            if (settings.get("auto_skip_all_dupes")
+                and batch_ok == 0
+                and batch_err == 0
+                and batch_skip == 0
+                and batch_dup > 0):
+                print("     (todo duplicado, paso al siguiente automáticamente)")
+                continue
+
             seguir = ask_continue(total_ok)
 
     except KeyboardInterrupt:
@@ -529,10 +606,12 @@ async def run(config: dict):
         await client.disconnect()
 
     # ── Resumen final (solo si hubo actividad) ──
-    if total_ok or total_dup or total_err:
+    if total_ok or total_dup or total_err or total_skip:
         print(f"\n  {'═' * 46}")
         print(f"  DESCARGA FINALIZADA")
         print(f"  Archivos descargados: {total_ok}")
+        if total_skip:
+            print(f"  Omitidos (pesados):  {total_skip}")
         if total_dup:
             print(f"  Ya existían:          {total_dup}")
         if total_err:
@@ -550,6 +629,7 @@ async def run(config: dict):
 def main():
     _load_dotenv()  # Cargar .env automáticamente, sin dependencias externas
     config = load_config()
+    settings = _load_settings()
 
     print()
     print("  ╔═══════════════════════════════════════════╗")
@@ -569,7 +649,7 @@ def main():
     print()
 
     try:
-        asyncio.run(run(config))
+        asyncio.run(run(config, settings))
     except KeyboardInterrupt:
         print("\n  ⚑  Interrumpido.")
 
