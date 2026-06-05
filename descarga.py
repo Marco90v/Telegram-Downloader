@@ -259,8 +259,9 @@ def _media_size(msg) -> int | None:
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
 
 DEFAULT_SETTINGS = {
-    "auto_skip_all_dupes": False,       # Si todo el lote ya existe, no preguntar
-    "large_file_threshold_mb": 50,      # Umbral en MB ("skip" o "ask" ignoran archivos > esto)
+    "auto_skip_all_dupes": False,       # Si lote completo es dupe/omitido, no preguntar (auto-continúa)
+    "auto_continue": False,             # Modo silencioso total: nunca preguntar entre lotes
+    "large_file_threshold_mb": 50,      # Umbral en MB (modos "skip" o "ask" ignoran archivos > esto)
     "large_file_action": "ask",         # "ask" | "download" | "skip"
 }
 
@@ -282,8 +283,11 @@ def _load_settings() -> dict:
                 json.dump(DEFAULT_SETTINGS, f, indent=2)
             print(f"  ✓ Creado settings.json")
             print(f"    └ Editálo para cambiar el comportamiento sin tocar código.")
-            print(f"    └ Opciones: large_file_action → ask | download | skip")
-            print(f"    └           auto_skip_all_dupes → true | false")
+            print(f"    └ Opciones:")
+            print(f"    └   large_file_action → ask | download | skip")
+            print(f"    └   large_file_threshold_mb → número (MB)")
+            print(f"    └   auto_skip_all_dupes → true | false")
+            print(f"    └   auto_continue → true | false (modo silencioso total)")
         except OSError as e:
             print(f"  ⚠  No se pudo crear settings.json: {e}")
     return dict(DEFAULT_SETTINGS)
@@ -329,8 +333,11 @@ async def run(config: dict, settings: dict):
     # ── Mostrar configuración activa ──
     action_label = {"ask": "preguntar", "download": "siempre", "skip": "omitir"}.get(
         settings["large_file_action"], settings["large_file_action"])
-    print(f"  ⚙  Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}"
-          f"  |  Archivos >{settings['large_file_threshold_mb']}MB: {action_label}")
+    mode = "silencioso" if settings.get("auto_continue") else \
+           ("auto-skip" if settings.get("auto_skip_all_dupes") else "normal")
+    print(f"  ⚙  Modo: {mode}  |  "
+          f"Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}  |  "
+          f"Archivos >{settings['large_file_threshold_mb']}MB: {action_label}")
     print()
 
     chat_id = config["TELEGRAM_TARGET_CHAT"]
@@ -604,13 +611,16 @@ async def run(config: dict, settings: dict):
                     print(f"  ✓ Solo quedaban {media_en_batch} archivos multimedia.")
                 break
 
-            # ── Auto-skip si todo el lote ya existía ──
+            # ── Auto-skip si no se descargó nada nuevo ──
             if (settings.get("auto_skip_all_dupes")
                 and batch_ok == 0
                 and batch_err == 0
-                and batch_skip == 0
-                and batch_dup > 0):
-                print("     (todo duplicado, paso al siguiente automáticamente)")
+                and (batch_dup > 0 or batch_skip > 0)):
+                print("     (sin novedades, paso al siguiente automáticamente)")
+                continue
+
+            # ── Auto-continue (modo silencioso) ──
+            if settings.get("auto_continue"):
                 continue
 
             seguir = ask_continue(total_ok)

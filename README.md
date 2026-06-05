@@ -30,16 +30,27 @@ Se crea automáticamente al ejecutar. Editálo con cualquier editor de texto.
 ```json
 {
   "auto_skip_all_dupes": false,
+  "auto_continue": false,
   "large_file_threshold_mb": 50,
   "large_file_action": "ask"
 }
 ```
 
-| Opción | Valores | Qué hace |
-|--------|---------|----------|
-| `auto_skip_all_dupes` | `true` / `false` | Si `true` y todo el lote ya existe, pasa al siguiente sin preguntar |
-| `large_file_threshold_mb` | número | Archivos más grandes que esto (en MB) reciben tratamiento especial. `0` para desactivar |
-| `large_file_action` | `"ask"` / `"download"` / `"skip"` | Qué hacer con archivos grandes: preguntar, descargar siempre, u omitir sin preguntar |
+| Opción | Valores | Default | Qué hace |
+|--------|---------|---------|----------|
+| `auto_skip_all_dupes` | `true` / `false` | `false` | Si todo el lote fue duplicado u omitido por tamaño (nada nuevo descargado), saltea la pregunta y sigue al siguiente automáticamente |
+| `auto_continue` | `true` / `false` | `false` | Modo silencioso total — nunca pregunta entre lotes. Procesa todo sin parar. Ctrl+C para interrumpir. **No afecta** la pregunta inicial de fechas ni la confirmación de arranque |
+| `large_file_threshold_mb` | número | `50` | Archivos más grandes que esto (MB) reciben tratamiento especial. `0` desactiva el control |
+| `large_file_action` | `"ask"` / `"download"` / `"skip"` | `"ask"` | `ask` → pregunta por cada archivo grande · `download` → descarga siempre · `skip` → omite sin preguntar |
+
+**Combinaciones comunes:**
+
+| Config | Efecto |
+|--------|--------|
+| Default (todo false, `"ask"`) | Modo interactivo: pregunta por archivos > umbral y al final de cada lote |
+| `large_file_action: "skip"` | Omite archivos pesados en silencio, pregunta solo al final del lote |
+| `auto_skip_all_dupes: true` + `"skip"` | Saltea la pregunta por lote si nada nuevo se descargó. Pregunta solo cuando algo se bajó |
+| `auto_continue: true` + `"skip"` | **Modo fuego y olvido**: configura una vez, ejecutá y dejala correr |
 
 ## Uso
 
