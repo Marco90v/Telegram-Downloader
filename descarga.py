@@ -257,6 +257,7 @@ def _media_size(msg) -> int | None:
 # ===========================================================================
 
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
+CATALOG_PATH = Path(__file__).parent / "catalog.json"
 
 DEFAULT_SETTINGS = {
     "auto_skip_all_dupes": False,       # Si lote completo es dupe/omitido, no preguntar (auto-continúa)
@@ -291,6 +292,32 @@ def _load_settings() -> dict:
         except OSError as e:
             print(f"  ⚠  No se pudo crear settings.json: {e}")
     return dict(DEFAULT_SETTINGS)
+
+
+# ===========================================================================
+# Catálogo de descargas (catalog.json)
+# ===========================================================================
+# Registra el rango de message_ids procesados por chat para poder reanudar
+# en sesiones futuras sin re-descargar todo.
+
+def _load_catalog() -> dict:
+    """Carga catalog.json o devuelve un catálogo vacío."""
+    if CATALOG_PATH.exists():
+        try:
+            with open(CATALOG_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"chats": {}}
+
+
+def _save_catalog(catalog: dict) -> None:
+    """Guarda catalog.json."""
+    try:
+        with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(catalog, f, indent=2)
+    except OSError as e:
+        print(f"  ⚠  No se pudo guardar catalog.json: {e}")
 
 
 async def _count_media(client, entity):
@@ -399,7 +426,34 @@ async def run(config: dict, settings: dict):
     print(f"  Lote de:      {config['BATCH_SIZE']} archivos")
     print(f"  Guardando en: {output_dir}/\n")
 
-    if not ask_bool("  ¿Empezamos? (s/n/q): "):
+    # ── Catálogo de sesiones anteriores ──
+    catalog = _load_catalog()
+    chat_key = chat_folder or str(chat_id)
+    prev = catalog.get("chats", {}).get(chat_key)
+
+    resume_newest = None   # message_id más reciente ya procesado
+    resume_oldest = None   # message_id más antiguo ya procesado
+    resume_complete = False
+
+    if prev:
+        pn = prev.get("newest_id", 0)
+        po = prev.get("oldest_id", 0)
+        pc = prev.get("total_count", 0)
+        pd = prev.get("last_date", "?")
+
+        print(f"    Última sesión: {pc} archivos procesados "
+              f"(mensajes {po}→{pn}, {pd})")
+        print(f"    1. Reanudar — solo contenido nuevo")
+        print(f"    2. Reanudar — continuar también hacia atrás")
+        print(f"    3. Empezar de nuevo")
+        opt = input("  Opción (1/2/3): ").strip()
+        if opt in ("1", "2"):
+            resume_newest = pn
+            resume_oldest = po
+            resume_complete = (opt == "2")
+            print()
+
+    if resume_newest is None and not ask_bool("  ¿Empezamos? (s/n/q): "):
         print("  ⚐  Omitido por el usuario.\n")
         await client.disconnect()
         return
@@ -411,6 +465,8 @@ async def run(config: dict, settings: dict):
     since = config.get("_since")
     until = config.get("_until")
     seguir = True
+    session_min_id = float('inf')
+    session_max_id = 0
 
     try:
         while seguir:
@@ -467,12 +523,32 @@ async def run(config: dict, settings: dict):
                         break
                     continue
 
+                # ── Resume: filtrar mensajes ya procesados ──
+                if resume_newest is not None:
+                    _before = len(pendientes)
+                    pendientes = [m for m in pendientes
+                                  if not (resume_oldest <= m.id <= resume_newest)]
+                    if not pendientes and _before > 0:
+                        if resume_complete:
+                            offset_id = resume_oldest
+                            resume_newest = None
+                            continue
+                        else:
+                            seguir = False
+                            break
+                    if pendientes and pendientes[-1].id < resume_oldest:
+                        resume_newest = None
+
                 # ── Descargar cada uno (contador global en el lote) ──
                 w = len(str(config['BATCH_SIZE']))
 
                 for msg in pendientes:
                     fpath = _media_path(msg, output_dir)
                     pos = media_en_batch + 1   # posición global en el lote
+
+                    # ── Registrar IDs para el catálogo ──
+                    session_min_id = min(session_min_id, msg.id)
+                    session_max_id = max(session_max_id, msg.id)
 
                     # ── Duplicado ──
                     if fpath.exists():
@@ -645,6 +721,21 @@ async def run(config: dict, settings: dict):
             print(f"  Tamaño total:         {format_size(total_bytes)}")
         print(f"  Guardado en:          {output_dir}/")
         print(f"  {'═' * 46}\n")
+
+        # ── Guardar catálogo ──
+        if session_max_id > 0:
+            chat_key = chat_folder or str(chat_id)
+            cat = catalog.setdefault("chats", {}).get(chat_key, {})
+            cat["newest_id"] = max(cat.get("newest_id", 0), session_max_id)
+            cat["oldest_id"] = min(cat.get("oldest_id", float('inf')), session_min_id)
+            if cat["oldest_id"] == float('inf'):
+                cat["oldest_id"] = session_min_id
+            cat["last_date"] = datetime.now().strftime("%Y-%m-%d")
+            cat["total_count"] = cat.get("total_count", 0) + total_ok + total_dup + total_skip
+            catalog.setdefault("chats", {})[chat_key] = cat
+            _save_catalog(catalog)
+            print(f"  📋 Catálogo actualizado — las próximas ejecuciones podrán reanudar.")
+            print(f"  {'═' * 46}\n")
 
 
 # ===========================================================================

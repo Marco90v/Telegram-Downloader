@@ -59,9 +59,15 @@ python descarga.py
 ```
 
 1. Opcional: filtrar por rango de fechas
-2. Confirma que querés empezar
-3. El script descarga en lotes, preguntando si querés continuar después de cada uno
-4. Ctrl+C interrumpe limpia y ordenadamente
+2. Si es la primera vez o elegís empezar de nuevo, confirma que querés comenzar
+3. **Reanudar sesiones anteriores**: el script detecta si ya descargaste contenido de este chat y te pregunta:
+   - **Solo contenido nuevo**: descarga solo los mensajes posteriores al último visto
+   - **Continuar completo**: además del contenido nuevo, sigue descargando hacia atrás saltando lo ya procesado
+   - **Empezar de nuevo**: ignora el historial y descarga todo otra vez
+4. El script descarga en lotes, preguntando si querés continuar después de cada uno (excepto si `auto_continue: true`)
+5. Ctrl+C interrumpe limpia y ordenadamente
+
+Al finalizar, el catálogo (`catalog.json`) se actualiza automáticamente para la próxima reanudación.
 
 Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, con subcarpeta si el chat tiene un canal vinculado.
 
@@ -70,3 +76,12 @@ Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, c
 - `📷` = foto, `🎬` = video
 - Barra de progreso con porcentaje y MB descargados / total
 - `✓` = descargado, `⏭` = ya existía u omitido, `✗` = error
+
+## Catálogo de reanudación
+
+`catalog.json` se crea automáticamente al lado de `settings.json`. Registra por chat:
+
+- Rango de message IDs procesados (el más reciente y el más antiguo)
+- Cantidad total y fecha de la última sesión
+
+No requiere mantenimiento manual. Si borrás los archivos del disco y querés descargar solo lo nuevo, el catálogo evita que se descargue todo de nuevo.
