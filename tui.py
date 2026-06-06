@@ -844,66 +844,44 @@ class ConfigScreen(Screen):
         width: 100%;
         height: auto;
         border: round $primary;
-        padding: 0 2 1 2;
-        margin: 1 2;
+        padding: 0;
+        margin: 0;
     }
 
     #config-title {
         text-style: bold;
-        padding-top: 1;
-        margin-bottom: 0;
+        padding: 0;
+        margin: 0;
     }
 
     #config-status {
         min-height: 1;
-        margin-bottom: 0;
-    }
-
-    #date-row, #batch-row {
-        height: auto;
-        margin-top: 0;
-    }
-
-    #date-row > Vertical, #batch-row > Vertical {
-        width: 1fr;
-        margin-right: 1;
-    }
-
-    #settings-section {
-        margin-top: 0;
-        padding-bottom: 0;
-    }
-
-    #switch-row {
-        height: auto;
-        align: left middle;
+        padding: 0;
         margin: 0;
     }
 
-    #switch-row > Static {
-        margin-right: 1;
-        width: auto;
-    }
-
-    #switch-row > Switch {
-        margin-right: 2;
+    #settings-section {
+        padding: 0;
+        margin: 0;
     }
 
     #config-controls {
         height: 3;
         align: center middle;
-        margin: 0 1 1 1;
+        padding: 0;
+        margin: 0;
     }
 
-    ConfigScreen Input, ConfigScreen Select {
-        margin: 0 0 1 0;
+    ConfigScreen Input, ConfigScreen Select, ConfigScreen Button {
+        margin: 0;
+        padding: 0;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
 
-        # ── Formulario scrolleable ──
+        # ── Formulario secuencial puro (sin grid, sin flex) ──
         with Vertical(id="config-box"):
             yield Static("[bold cyan]Configuración[/]", id="config-title")
             yield Static("", id="config-status")
@@ -911,21 +889,15 @@ class ConfigScreen(Screen):
             yield Static("Chat (ID numérico o @username):")
             yield Input(id="cfg-chat", placeholder="-1001234567890 o @chat")
 
-            with Horizontal(id="date-row"):
-                with Vertical():
-                    yield Static("Fecha desde (opcional):")
-                    yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
-                with Vertical():
-                    yield Static("Fecha hasta (opcional):")
-                    yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
+            yield Static("Fecha desde (opcional):")
+            yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
+            yield Static("Fecha hasta (opcional):")
+            yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
 
-            with Horizontal(id="batch-row"):
-                with Vertical():
-                    yield Static("Archivos por lote:")
-                    yield Input(id="cfg-batch", placeholder="100")
-                with Vertical():
-                    yield Static("Umbral archivo grande (MB):")
-                    yield Input(id="cfg-large-threshold", placeholder="50")
+            yield Static("Archivos por lote:")
+            yield Input(id="cfg-batch", placeholder="100")
+            yield Static("Umbral archivo grande (MB):")
+            yield Input(id="cfg-large-threshold", placeholder="50")
 
             yield Static("[bold]Comportamiento[/]", id="settings-section")
 
@@ -936,12 +908,10 @@ class ConfigScreen(Screen):
                 prompt="Seleccionar acción",
             )
 
-            with Horizontal(id="switch-row"):
-                yield Static("Auto-omitir duplicados:")
-                yield Switch(id="cfg-skip-dupes")
-
-                yield Static("Auto-continuar:")
-                yield Switch(id="cfg-auto-continue")
+            yield Static("Auto-omitir duplicados:")
+            yield Switch(id="cfg-skip-dupes")
+            yield Static("Auto-continuar:")
+            yield Switch(id="cfg-auto-continue")
 
         # ── Botones siempre visibles fuera del scroll ──
         with Horizontal(id="config-controls"):
