@@ -11,8 +11,10 @@ Requiere: pip install textual>=8.0
 """
 
 import asyncio
+import json
 import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from telethon import TelegramClient, errors
@@ -29,7 +31,9 @@ from textual.widgets import (
     Label,
     ProgressBar,
     RichLog,
+    Select,
     Static,
+    Switch,
 )
 
 from core import (
@@ -66,6 +70,18 @@ def _fail(t: str) -> str:
 
 def _head(t: str) -> str:
     return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
+
+
+SETTINGS_PATH = Path(__file__).parent / "settings.json"
+
+
+def _save_settings(settings: dict) -> None:
+    """Guarda settings.json."""
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except OSError:
+        pass
 
 
 # ── Pantalla de login ──
@@ -407,8 +423,8 @@ class MainScreen(Screen):
             self.query_one("#btn-pause", Button).label = "⏸  Pausar"
 
     def action_open_config(self) -> None:
-        """Abrir pantalla de configuración (Fase 3)."""
-        self._log(_warn("Configuración — próximamente (Fase 3)."))
+        """Abrir pantalla de configuración."""
+        self.app.push_screen(ConfigScreen())
 
     def action_quit(self) -> None:
         """Detiene todo y cierra la app."""
@@ -428,6 +444,229 @@ class MainScreen(Screen):
             self.action_open_config()
         elif event.button.id == "btn-quit":
             self.action_quit()
+
+
+# ── Pantalla de configuración ──
+
+
+class ConfigScreen(Screen):
+    """Configuración de la descarga: chat, fechas, settings."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancelar"),
+        Binding("q", "cancel", "Salir"),
+    ]
+
+    CSS = """
+    ConfigScreen {
+        align: center middle;
+    }
+
+    #config-box {
+        width: 60;
+        height: auto;
+        border: round $primary;
+        padding: 1 2;
+        margin: 1 2;
+    }
+
+    #config-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #config-status {
+        margin-bottom: 1;
+    }
+
+    #date-row {
+        height: auto;
+    }
+
+    #date-row > Vertical {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    #settings-section {
+        margin-top: 1;
+        border-bottom: solid $primary 30%;
+        padding-bottom: 0;
+    }
+
+    #switch-row {
+        height: auto;
+        align: left middle;
+        margin: 1 0;
+    }
+
+    #switch-row > Static {
+        margin-right: 1;
+        width: auto;
+    }
+
+    #switch-row > Switch {
+        margin-right: 2;
+    }
+
+    #config-controls {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+
+    ConfigScreen Input {
+        margin: 0 0 1 0;
+    }
+
+    ConfigScreen Select {
+        margin: 0 0 1 0;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+
+        with Vertical(id="config-box"):
+            yield Static("[bold cyan]Configuración[/]", id="config-title")
+            yield Static("", id="config-status")
+
+            yield Static("Chat (ID numérico o @username):")
+            yield Input(id="cfg-chat", placeholder="-1001234567890 o @chat")
+
+            with Horizontal(id="date-row"):
+                with Vertical():
+                    yield Static("Fecha desde (opcional):")
+                    yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
+                with Vertical():
+                    yield Static("Fecha hasta (opcional):")
+                    yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
+
+            yield Static("Archivos por lote:")
+            yield Input(id="cfg-batch", placeholder="100")
+
+            yield Static("[bold]Comportamiento[/]", id="settings-section")
+
+            yield Static("Archivos grandes:")
+            yield Select.from_values(
+                ["ask", "skip", "download"],
+                id="cfg-large-action",
+                prompt="Seleccionar acción",
+            )
+
+            yield Static("Umbral archivo grande (MB):")
+            yield Input(id="cfg-large-threshold", placeholder="50")
+
+            with Horizontal(id="switch-row"):
+                yield Static("Auto-omitir duplicados:")
+                yield Switch(id="cfg-skip-dupes")
+
+                yield Static("Auto-continuar:")
+                yield Switch(id="cfg-auto-continue")
+
+            with Horizontal(id="config-controls"):
+                yield Button("Guardar", id="btn-save", variant="primary")
+                yield Button("Cancelar", id="btn-cancel", variant="error")
+
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Carga valores actuales de config y settings."""
+        config = self.app.config
+        settings = self.app.settings
+
+        self.query_one("#cfg-chat", Input).value = str(config.get("TELEGRAM_TARGET_CHAT", ""))
+
+        since = config.get("_since")
+        if since:
+            self.query_one("#cfg-since", Input).value = since.strftime("%Y-%m-%d")
+        until = config.get("_until")
+        if until:
+            self.query_one("#cfg-until", Input).value = until.strftime("%Y-%m-%d")
+
+        self.query_one("#cfg-batch", Input).value = str(config.get("BATCH_SIZE", 100))
+
+        try:
+            self.query_one("#cfg-large-action", Select).value = settings.get(
+                "large_file_action", "ask"
+            )
+        except Exception:
+            pass
+
+        self.query_one("#cfg-large-threshold", Input).value = str(
+            settings.get("large_file_threshold_mb", 50)
+        )
+        self.query_one("#cfg-skip-dupes", Switch).value = settings.get("auto_skip_all_dupes", False)
+        self.query_one("#cfg-auto-continue", Switch).value = settings.get("auto_continue", False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-save":
+            self._save()
+        elif event.button.id == "btn-cancel":
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        self.app.pop_screen()
+
+    def _save(self) -> None:
+        """Valida y guarda la configuración."""
+        status = self.query_one("#config-status", Static)
+
+        try:
+            # ── Chat target ──
+            raw_chat = self.query_one("#cfg-chat", Input).value.strip()
+            if raw_chat:
+                try:
+                    self.app.config["TELEGRAM_TARGET_CHAT"] = int(raw_chat)
+                except ValueError:
+                    self.app.config["TELEGRAM_TARGET_CHAT"] = raw_chat
+
+            # ── Fechas ──
+            raw_since = self.query_one("#cfg-since", Input).value.strip()
+            if raw_since:
+                self.app.config["_since"] = datetime.strptime(raw_since, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            else:
+                self.app.config.pop("_since", None)
+
+            raw_until = self.query_one("#cfg-until", Input).value.strip()
+            if raw_until:
+                self.app.config["_until"] = datetime.strptime(raw_until, "%Y-%m-%d").replace(
+                    hour=23, minute=59, second=59, tzinfo=timezone.utc
+                )
+            else:
+                self.app.config.pop("_until", None)
+
+            # ── Batch ──
+            raw_batch = self.query_one("#cfg-batch", Input).value.strip()
+            if raw_batch:
+                self.app.config["BATCH_SIZE"] = int(raw_batch)
+
+            # ── Settings ──
+            large_action = self.query_one("#cfg-large-action", Select).value
+            if large_action and large_action != Select.BLANK:
+                self.app.settings["large_file_action"] = large_action
+
+            raw_threshold = self.query_one("#cfg-large-threshold", Input).value.strip()
+            if raw_threshold:
+                self.app.settings["large_file_threshold_mb"] = int(raw_threshold)
+
+            self.app.settings["auto_skip_all_dupes"] = self.query_one(
+                "#cfg-skip-dupes", Switch
+            ).value
+            self.app.settings["auto_continue"] = self.query_one("#cfg-auto-continue", Switch).value
+
+            # ── Persistir ──
+            _save_settings(self.app.settings)
+
+            status.update("[bold green]✓ Guardado[/]")
+            self.set_timer(0.8, self.app.pop_screen)
+
+        except ValueError as e:
+            status.update(f"[bold red]Error: formato inválido — {e}[/]")
+        except Exception as e:
+            status.update(f"[bold red]Error inesperado: {e}[/]")
 
 
 # ── App ──
