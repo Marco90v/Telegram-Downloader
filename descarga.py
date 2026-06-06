@@ -23,6 +23,30 @@ from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVide
 
 
 # ===========================================================================
+# Colores ANSI (compatibles con cualquier terminal moderna)
+# ===========================================================================
+# Sin dependencias, puro escape codes. Las funciones devuelven strings
+# listas para print(). NO se usa color en operators, solo en UI.
+
+class _c:
+    """ANSI escape codes — usa _c.GREEN + texto + _c.RST como marcador."""
+    RST   = "\033[0m"
+    BOLD  = "\033[1m"
+    DIM   = "\033[2m"
+    GREEN = "\033[32m"
+    YEL   = "\033[33m"
+    RED   = "\033[31m"
+    CYAN  = "\033[36m"
+    MAG   = "\033[35m"
+
+# Convenience: wrapper corto para emojis/iconos de estado
+def _ok(t: str) -> str:   return f"{_c.GREEN}{t}{_c.RST}"
+def _warn(t: str) -> str: return f"{_c.YEL}{t}{_c.RST}"
+def _err(t: str) -> str:  return f"{_c.RED}{t}{_c.RST}"
+def _head(t: str) -> str: return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
+
+
+# ===========================================================================
 # .env parser (zero dependencies)
 # ===========================================================================
 
@@ -277,12 +301,12 @@ def _load_settings() -> dict:
             merged.update(user)  # lo que puso el usuario pisa defaults
             return merged
         except (json.JSONDecodeError, OSError) as e:
-            print(f"  ⚠  settings.json inválido ({e}), se usan valores por defecto.")
+            print(f"  {_warn('⚠')} settings.json inválido ({e}), se usan valores por defecto.")
     else:
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_SETTINGS, f, indent=2)
-            print(f"  ✓ Creado settings.json")
+            print(f"  {_ok('✓')} Creado settings.json")
             print(f"    └ Editálo para cambiar el comportamiento sin tocar código.")
             print(f"    └ Opciones:")
             print(f"    └   large_file_action → ask | download | skip")
@@ -290,7 +314,7 @@ def _load_settings() -> dict:
             print(f"    └   auto_skip_all_dupes → true | false")
             print(f"    └   auto_continue → true | false (modo silencioso total)")
         except OSError as e:
-            print(f"  ⚠  No se pudo crear settings.json: {e}")
+            print(f"  {_warn('⚠')} No se pudo crear settings.json: {e}")
     return dict(DEFAULT_SETTINGS)
 
 
@@ -317,7 +341,7 @@ def _save_catalog(catalog: dict) -> None:
         with open(CATALOG_PATH, "w", encoding="utf-8") as f:
             json.dump(catalog, f, indent=2)
     except OSError as e:
-        print(f"  ⚠  No se pudo guardar catalog.json: {e}")
+        print(f"  {_warn('⚠')} No se pudo guardar catalog.json: {e}")
 
 
 async def _count_media(client, entity):
@@ -355,14 +379,14 @@ async def run(config: dict, settings: dict):
     )
 
     await client.start()
-    print("  ✓ Conectado a Telegram.\n")
+    print(f"  {_ok('✓')} Conectado a Telegram.\n")
 
     # ── Mostrar configuración activa ──
     action_label = {"ask": "preguntar", "download": "siempre", "skip": "omitir"}.get(
         settings["large_file_action"], settings["large_file_action"])
     mode = "silencioso" if settings.get("auto_continue") else \
            ("auto-skip" if settings.get("auto_skip_all_dupes") else "normal")
-    print(f"  ⚙  Modo: {mode}  |  "
+    print(f"  {_head('⚙')} Modo: {mode}  |  "
           f"Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}  |  "
           f"Archivos >{settings['large_file_threshold_mb']}MB: {action_label}")
     print()
@@ -454,7 +478,7 @@ async def run(config: dict, settings: dict):
             print()
 
     if resume_newest is None and not ask_bool("  ¿Empezamos? (s/n/q): "):
-        print("  ⚐  Omitido por el usuario.\n")
+        print(f"  {_warn('⚐')} Omitido por el usuario.\n")
         await client.disconnect()
         return
 
@@ -497,11 +521,11 @@ async def run(config: dict, settings: dict):
                     mensajes = await client.get_messages(entity, **kwargs)
                 except errors.FloodWaitError as e:
                     espera = e.seconds
-                    print(f"  ⚠  Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)...")
+                    print(f"  {_warn('⚠')} Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)...")
                     await asyncio.sleep(espera)
                     continue
                 except Exception as e:
-                    print(f"  ✗ Error al obtener mensajes: {e}")
+                    print(f"  {_err('✗')} Error al obtener mensajes: {e}")
                     seguir = False
                     break
 
@@ -556,9 +580,9 @@ async def run(config: dict, settings: dict):
                         media_en_batch += 1
                         try:
                             dup_size = format_size(fpath.stat().st_size)
-                            print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)")
+                            print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)")
                         except OSError:
-                            print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
+                            print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
                         continue
 
                     icono = "📷" if msg.photo else "🎬"
@@ -572,7 +596,7 @@ async def run(config: dict, settings: dict):
                     if _es_grande and settings["large_file_action"] == "skip":
                         batch_skip += 1
                         media_en_batch += 1
-                        print(f"  ⏭ [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({format_size(_fsize)})  (omitido por tamaño)")
+                        print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  {_warn(format_size(_fsize))}  (omitido por tamaño)")
                         continue
 
                     if _es_grande and settings["large_file_action"] == "ask":
@@ -593,7 +617,7 @@ async def run(config: dict, settings: dict):
 
                         if ruta is None:
                             fpath.unlink(missing_ok=True)
-                            print(f"{_clear_line()}{inicio}  ✗ no disponible")
+                            print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
                             batch_err += 1
                             media_en_batch += 1
                             continue
@@ -608,13 +632,13 @@ async def run(config: dict, settings: dict):
                         batch_ok += 1
                         media_en_batch += 1
                         if size_str:
-                            print(f"{_clear_line()}{inicio}  ✓  {size_str}")
+                            print(f"{_clear_line()}{inicio}  {_ok('✓')}  {size_str}")
                         else:
-                            print(f"{_clear_line()}{inicio}  ✓")
+                            print(f"{_clear_line()}{inicio}  {_ok('✓')}")
 
                     except errors.FloodWaitError as e:
                         espera = e.seconds
-                        print(f"{_clear_line()}{inicio}  ⏳ FloodWait {espera}s...")
+                        print(f"{_clear_line()}{inicio}  {_warn('⏳')} FloodWait {espera}s...")
                         await asyncio.sleep(espera)
                         # Reintento único
                         try:
@@ -631,21 +655,21 @@ async def run(config: dict, settings: dict):
                                     size_str = ""
                                 batch_ok += 1
                                 if size_str:
-                                    print(f"{_clear_line()}{inicio}  ✓  {size_str}")
+                                    print(f"{_clear_line()}{inicio}  {_ok('✓')}  {size_str}")
                                 else:
-                                    print(f"{_clear_line()}{inicio}  ✓")
+                                    print(f"{_clear_line()}{inicio}  {_ok('✓')}")
                             else:
                                 fpath.unlink(missing_ok=True)
-                                print(f"{_clear_line()}{inicio}  ✗ no disponible")
+                                print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
                                 batch_err += 1
                             media_en_batch += 1
                         except Exception as e2:
-                            print(f"{_clear_line()}{inicio}  ✗ {e2}")
+                            print(f"{_clear_line()}{inicio}  {_err('✗')} {e2}")
                             batch_err += 1
                             media_en_batch += 1
 
                     except Exception as e:
-                        print(f"{_clear_line()}{inicio}  ✗ {e}")
+                        print(f"{_clear_line()}{inicio}  {_err('✗')} {e}")
                         batch_err += 1
                         media_en_batch += 1
 
@@ -668,7 +692,7 @@ async def run(config: dict, settings: dict):
             if batch_dup:
                 print(f"     Ya tenías:   {batch_dup}")
             if batch_err:
-                print(f"     Errores:     {batch_err}")
+                print(f"  {_err('Errores:')}     {batch_err}")
             if batch_bytes:
                 print(f"     Tamaño:      {format_size(batch_bytes)}")
 
@@ -677,14 +701,14 @@ async def run(config: dict, settings: dict):
                 break
 
             if llegue_al_inicio:
-                print("\n  ✓ Se alcanzó la fecha de inicio (no hay mensajes más viejos).")
+                print(f"\n  {_ok('✓')} Se alcanzó la fecha de inicio (no hay mensajes más viejos).")
                 break
 
             if not mensajes:
                 if media_en_batch == 0:
-                    print("  ✓ No hay más mensajes.")
+                    print(f"  {_ok('✓')} No hay más mensajes.")
                 else:
-                    print(f"  ✓ Solo quedaban {media_en_batch} archivos multimedia.")
+                    print(f"  {_ok('✓')} Solo quedaban {media_en_batch} archivos multimedia.")
                 break
 
             # ── Auto-skip si no se descargó nada nuevo ──
@@ -692,7 +716,7 @@ async def run(config: dict, settings: dict):
                 and batch_ok == 0
                 and batch_err == 0
                 and (batch_dup > 0 or batch_skip > 0)):
-                print("     (sin novedades, paso al siguiente automáticamente)")
+                print(f"     ({_warn('sin novedades')}, paso al siguiente automáticamente)")
                 continue
 
             # ── Auto-continue (modo silencioso) ──
@@ -702,25 +726,25 @@ async def run(config: dict, settings: dict):
             seguir = ask_continue(total_ok)
 
     except KeyboardInterrupt:
-        print("\n  ⚑  Interrumpido.")
+        print(f"\n  {_warn('⚑')} Interrumpido.")
     finally:
         await client.disconnect()
 
     # ── Resumen final (solo si hubo actividad) ──
     if total_ok or total_dup or total_err or total_skip:
-        print(f"\n  {'═' * 46}")
-        print(f"  DESCARGA FINALIZADA")
-        print(f"  Archivos descargados: {total_ok}")
+        print(f"\n  {_head('═' * 46)}")
+        print(f"  {_head('DESCARGA FINALIZADA')}")
+        print(f"  Archivos descargados: {_ok(str(total_ok))}")
         if total_skip:
-            print(f"  Omitidos (pesados):  {total_skip}")
+            print(f"  {_warn('Omitidos (pesados):')}  {total_skip}")
         if total_dup:
             print(f"  Ya existían:          {total_dup}")
         if total_err:
-            print(f"  Errores:              {total_err}")
+            print(f"  {_err('Errores:')}              {total_err}")
         if total_bytes:
             print(f"  Tamaño total:         {format_size(total_bytes)}")
         print(f"  Guardado en:          {output_dir}/")
-        print(f"  {'═' * 46}\n")
+        print(f"  {_head('═' * 46)}\n")
 
         # ── Guardar catálogo ──
         if session_max_id > 0:
@@ -734,8 +758,8 @@ async def run(config: dict, settings: dict):
             cat["total_count"] = cat.get("total_count", 0) + total_ok + total_dup + total_skip
             catalog.setdefault("chats", {})[chat_key] = cat
             _save_catalog(catalog)
-            print(f"  📋 Catálogo actualizado — las próximas ejecuciones podrán reanudar.")
-            print(f"  {'═' * 46}\n")
+            print(f"  {_ok('✓')} Catálogo actualizado — próximas ejecuciones podrán reanudar.")
+            print(f"  {_head('═' * 46)}\n")
 
 
 # ===========================================================================
@@ -748,9 +772,9 @@ def main():
     settings = _load_settings()
 
     print()
-    print("  ╔═══════════════════════════════════════════╗")
-    print("  ║    Descargador Masivo de Telegram         ║")
-    print("  ╚═══════════════════════════════════════════╝")
+    print(f"  {_head('╔' + '═' * 46 + '╗')}")
+    print(f"  {_head('║    Descargador Masivo de Telegram         ║')}")
+    print(f"  {_head('╚' + '═' * 46 + '╝')}")
     print()
 
     os.makedirs(config["OUTPUT_DIR"], exist_ok=True)
@@ -767,7 +791,7 @@ def main():
     try:
         asyncio.run(run(config, settings))
     except KeyboardInterrupt:
-        print("\n  ⚑  Interrumpido.")
+        print(f"\n  {_warn('⚑')} Interrumpido.")
 
 
 if __name__ == "__main__":
