@@ -75,7 +75,9 @@ Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, c
 
 - `📷` = foto, `🎬` = video
 - Barra de progreso con porcentaje y MB descargados / total
-- `✓` = descargado, `⏭` = ya existía u omitido, `✗` = error
+- `✓` = descargado (verde), `⏭` = ya existía u omitido (amarillo), `✗` = error (rojo)
+- Encabezados e información clave en cian
+- Sin dependencias — usa ANSI escape codes puros
 
 ## Catálogo de reanudación
 
@@ -85,3 +87,15 @@ Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, c
 - Cantidad total y fecha de la última sesión
 
 No requiere mantenimiento manual. Si borrás los archivos del disco y querés descargar solo lo nuevo, el catálogo evita que se descargue todo de nuevo.
+
+## Desarrollo
+
+```bash
+pip install -r requirements.txt      # instala dependencias + herramientas dev
+pre-commit install                    # activa hooks de Ruff al hacer commit
+ruff check descarga.py                # lint
+ruff check descarga.py --fix          # lint + auto-fix
+ruff format descarga.py               # formatear código
+```
+
+El proyecto usa [Ruff](https://astral.sh/ruff) como linter y formatter, con pre-commit hooks que verifican automáticamente antes de cada commit. Configuración en `pyproject.toml`.
