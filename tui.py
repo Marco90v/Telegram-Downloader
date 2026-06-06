@@ -841,14 +841,13 @@ class ConfigScreen(Screen):
     }
 
     #config-box {
-        width: 80%;
-        max-width: 100;
-        height: 1fr;
-        min-height: 10;
+        width: 100%;
+        height: auto;
+        max-height: 1fr;
         overflow-y: auto;
         border: round $primary;
         padding: 0 2;
-        margin: 1 2 0 2;
+        margin: 1 2;
     }
 
     #config-title {
@@ -860,12 +859,6 @@ class ConfigScreen(Screen):
     #config-status {
         min-height: 1;
         margin-bottom: 0;
-    }
-
-    #config-box > Static {
-        margin-top: 0;
-        margin-bottom: 0;
-        padding-top: 0;
     }
 
     #date-row, #batch-row {
@@ -880,7 +873,6 @@ class ConfigScreen(Screen):
 
     #settings-section {
         margin-top: 0;
-        border-bottom: solid $primary 30%;
         padding-bottom: 0;
     }
 
@@ -902,15 +894,11 @@ class ConfigScreen(Screen):
     #config-controls {
         height: 3;
         align: center middle;
-        margin: 1 1;
+        margin: 0 1 1 1;
     }
 
-    ConfigScreen Input {
-        margin: 0;
-    }
-
-    ConfigScreen Select {
-        margin: 0;
+    ConfigScreen Input, ConfigScreen Select {
+        margin: 0 0 1 0;
     }
     """
 
