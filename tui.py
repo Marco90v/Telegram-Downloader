@@ -861,13 +861,15 @@ class ConfigScreen(Screen):
         margin: 0;
     }
 
-    #date-labels, #date-inputs {
+    #date-labels, #date-inputs,
+    #batch-labels, #batch-inputs {
         height: auto;
         padding: 0;
         margin: 0;
     }
 
-    #date-labels > Static, #date-inputs > Input {
+    #date-labels > Static, #date-inputs > Input,
+    #batch-labels > Static, #batch-inputs > Input {
         width: 1fr;
         padding: 0;
         margin: 0;
@@ -913,10 +915,12 @@ class ConfigScreen(Screen):
                 yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
                 yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
 
-            yield Static("Archivos por lote:")
-            yield Input(id="cfg-batch", placeholder="100")
-            yield Static("Umbral archivo grande (MB):")
-            yield Input(id="cfg-large-threshold", placeholder="50")
+            with Horizontal(id="batch-labels"):
+                yield Static("Archivos por lote:")
+                yield Static("Umbral archivo grande (MB):")
+            with Horizontal(id="batch-inputs"):
+                yield Input(id="cfg-batch", placeholder="100")
+                yield Input(id="cfg-large-threshold", placeholder="50")
 
             yield Static("[bold]Comportamiento[/]", id="settings-section")
 
