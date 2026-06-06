@@ -885,7 +885,11 @@ class ConfigScreen(Screen):
         margin: 0;
     }
 
-    ConfigScreen Input, ConfigScreen Select, ConfigScreen Button {
+    ConfigScreen Static,
+    ConfigScreen Input,
+    ConfigScreen Select,
+    ConfigScreen Button,
+    ConfigScreen Switch {
         margin: 0;
         padding: 0;
     }
