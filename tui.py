@@ -212,7 +212,7 @@ class LoginScreen(Screen):
         try:
             asyncio.run(self._async_login())
         except Exception as e:
-            self.call_from_thread(self._on_login_error, str(e))
+            self.app.call_from_thread(self._on_login_error, str(e))
 
     async def _async_login(self) -> None:
         """Async flow: conecta, envía código, verifica, maneja 2FA."""
@@ -226,12 +226,12 @@ class LoginScreen(Screen):
 
         # ¿Ya autorizado?
         if await client.is_user_authorized():
-            self.call_from_thread(self._on_login_success)
+            self.app.call_from_thread(self._on_login_success)
             return
 
         # Enviar código
         await client.send_code_request(self._phone)
-        self.call_from_thread(self._show_code_input)
+        self.app.call_from_thread(self._show_code_input)
 
         # Esperar código (bloquea thread hasta que TUI lo ingrese)
         loop = asyncio.get_running_loop()
@@ -244,28 +244,28 @@ class LoginScreen(Screen):
             await client.sign_in(phone=self._phone, code=code)
         except SessionPasswordNeededError:
             # 2FA: pedir contraseña
-            self.call_from_thread(self._show_password_input)
+            self.app.call_from_thread(self._show_password_input)
             await loop.run_in_executor(None, self._password_event.wait)
             self._password_event.clear()
             pw = self._password_value
             await client.sign_in(password=pw)
         except errors.PhoneCodeInvalidError:
-            self.call_from_thread(self._on_code_error, "Código inválido. Intentá de nuevo.")
+            self.app.call_from_thread(self._on_code_error, "Código inválido. Intentá de nuevo.")
             return
         except errors.PhoneCodeExpiredError:
-            self.call_from_thread(self._on_code_error, "Código expirado. Solicitá uno nuevo.")
+            self.app.call_from_thread(self._on_code_error, "Código expirado. Solicitá uno nuevo.")
             return
         except errors.PhoneNumberInvalidError:
-            self.call_from_thread(self._on_login_error, "Número de teléfono inválido.")
+            self.app.call_from_thread(self._on_login_error, "Número de teléfono inválido.")
             return
 
         # Verificar que se haya autenticado
         if not await client.is_user_authorized():
-            self.call_from_thread(self._on_login_error, "No se pudo iniciar sesión.")
+            self.app.call_from_thread(self._on_login_error, "No se pudo iniciar sesión.")
             return
 
         await client.disconnect()
-        self.call_from_thread(self._on_login_success)
+        self.app.call_from_thread(self._on_login_success)
 
     # ── Cambios de UI ──
 
@@ -523,11 +523,15 @@ class MainScreen(Screen):
         self._batch_num = 0
         self._pause_event.set()
 
-        self.query_one("#btn-start").disabled = True
-        self.query_one("#btn-start").label = "▶  Descargando"
-        self.query_one("#btn-pause").disabled = False
-        self.query_one("#btn-pause").label = "⏸  Pausar"
-        self.query_one("#btn-config").disabled = True
+        try:
+            self.query_one("#btn-start").disabled = True
+            self.query_one("#btn-start").label = "▶  Descargando"
+            self.query_one("#btn-pause").disabled = False
+            self.query_one("#btn-pause").label = "⏸  Pausar"
+            self.query_one("#btn-config").disabled = True
+        except Exception as e:
+            self._set_status(f"[red]Error UI: {e}[/]")
+            return
 
         self._log(_ok("Iniciando descarga..."))
         self._set_status("[green]Conectando a Telegram...[/]")
@@ -545,7 +549,7 @@ class MainScreen(Screen):
         try:
             asyncio.run(self._async_download())
         except Exception as e:
-            self.call_from_thread(self._on_download_error, str(e))
+            self.app.call_from_thread(self._on_download_error, str(e))
 
     async def _async_download(self) -> None:
         """Async: conecta, prepara, descarga por lotes."""
@@ -554,23 +558,25 @@ class MainScreen(Screen):
 
         try:
             await engine.connect()
-            self.call_from_thread(self._log, _ok("✓ Conectado a Telegram"))
+            self.app.call_from_thread(self._log, _ok("✓ Conectado a Telegram"))
 
             info = await engine.prepare()
             self._chat_name = info["chat_name"]
             output_dir = info["output_dir"]
 
-            self.call_from_thread(self._update_stat, "detail-chat", f"Chat:  {self._chat_name}")
+            self.app.call_from_thread(self._update_stat, "detail-chat", f"Chat:  {self._chat_name}")
 
             # ── Resumen del chat ──
             fotos, videos = info["fotos"], info["videos"]
             total_media = (fotos or 0) + (videos or 0)
-            self.call_from_thread(self._log, f"Chat: {self._chat_name}")
-            self.call_from_thread(
+            self.app.call_from_thread(self._log, f"Chat: {self._chat_name}")
+            self.app.call_from_thread(
                 self._log, f"Contenido: {fmt_count(fotos)} fotos · {fmt_count(videos)} videos"
             )
-            self.call_from_thread(self._log, f"Total: {fmt_count(total_media)} archivos multimedia")
-            self.call_from_thread(self._log, f"Guardando en: {output_dir}/")
+            self.app.call_from_thread(
+                self._log, f"Total: {fmt_count(total_media)} archivos multimedia"
+            )
+            self.app.call_from_thread(self._log, f"Guardando en: {output_dir}/")
 
             # ── Reanudación ──
             resume_newest, resume_oldest, resume_complete = None, None, False
@@ -580,17 +586,19 @@ class MainScreen(Screen):
                 pn = prev.get("newest_id", 0)
                 po = prev.get("oldest_id", 0)
                 pd = prev.get("last_date", "?")
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self._log,
                     _ok(f"↻ Sesión anterior: {pc} archivos (IDs {po}→{pn}, {pd})"),
                 )
-                self.call_from_thread(self._log, _ok("↻ Reanudando — solo contenido nuevo"))
+                self.app.call_from_thread(self._log, _ok("↻ Reanudando — solo contenido nuevo"))
                 resume_newest = pn
                 resume_oldest = po
             else:
-                self.call_from_thread(self._log, _warn("⚐ Sin sesión anterior — descarga completa"))
+                self.app.call_from_thread(
+                    self._log, _warn("⚐ Sin sesión anterior — descarga completa")
+                )
 
-            self.call_from_thread(self._set_status, "[green]Descargando...[/]")
+            self.app.call_from_thread(self._set_status, "[green]Descargando...[/]")
 
             # ── Variables de iteración ──
             offset_id = 0
@@ -603,11 +611,11 @@ class MainScreen(Screen):
                     break
 
                 self._batch_num += 1
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self._update_stat, "detail-batch", f"Lote:  {self._batch_num}"
                 )
-                self.call_from_thread(self._log, f"\n{'─' * 30}")
-                self.call_from_thread(
+                self.app.call_from_thread(self._log, f"\n{'─' * 30}")
+                self.app.call_from_thread(
                     self._log,
                     f"Lote {self._batch_num} — "
                     f"juntando {self.app.config['BATCH_SIZE']} archivos...",
@@ -624,7 +632,7 @@ class MainScreen(Screen):
                 )
 
                 if batch["error"]:
-                    self.call_from_thread(self._log, _fail(f"✗ {batch['error']}"))
+                    self.app.call_from_thread(self._log, _fail(f"✗ {batch['error']}"))
                     break
 
                 media_messages = batch["media"]
@@ -634,9 +642,11 @@ class MainScreen(Screen):
 
                 if not media_messages:
                     if reached_start:
-                        self.call_from_thread(self._log, _ok("✓ Se alcanzó la fecha de inicio."))
+                        self.app.call_from_thread(
+                            self._log, _ok("✓ Se alcanzó la fecha de inicio.")
+                        )
                     elif should_stop:
-                        self.call_from_thread(self._log, _ok("✓ No hay más mensajes."))
+                        self.app.call_from_thread(self._log, _ok("✓ No hay más mensajes."))
                     break
 
                 # ── Descargar cada mensaje ──
@@ -656,8 +666,8 @@ class MainScreen(Screen):
                     line_prefix = f"  {icono} [{seq}] {fpath.name}"
 
                     self._current_file = fpath.name
-                    self.call_from_thread(self._reset_progress_bar)
-                    self.call_from_thread(
+                    self.app.call_from_thread(self._reset_progress_bar)
+                    self.app.call_from_thread(
                         self._update_stat, "detail-file", f"Archivo:  {fpath.name}"
                     )
 
@@ -667,12 +677,12 @@ class MainScreen(Screen):
                     es_grande = fsize is not None and fsize > thr and thr > 0
                     if es_grande and engine.settings["large_file_action"] in ("ask", "skip"):
                         engine.add_result({"status": "skip", "size": 0})
-                        self.call_from_thread(
+                        self.app.call_from_thread(
                             self._log,
                             f"  {_warn('⏭')} {line_prefix}  "
                             f"{_warn(format_size(fsize))}  (omitido por tamaño)",
                         )
-                        self.call_from_thread(self._update_stats, engine)
+                        self.app.call_from_thread(self._update_stats, engine)
                         continue
 
                     # ── Descargar ──
@@ -705,30 +715,30 @@ class MainScreen(Screen):
                     else:
                         log_line = f"  {line_prefix}"
 
-                    self.call_from_thread(self._log, log_line)
-                    self.call_from_thread(self._update_stats, engine)
+                    self.app.call_from_thread(self._log, log_line)
+                    self.app.call_from_thread(self._update_stats, engine)
 
                     # Pequeña pausa para que la UI respire entre archivos
                     await asyncio.sleep(0.01)
 
                 # ── Resumen del lote ──
                 t = engine.totals
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self._log,
                     f"  ── Lote {self._batch_num}: "
                     f"{t['ok']} ok · {t['dup']} dup · {t['err']} err · {t['skip']} skip",
                 )
 
                 if reached_start:
-                    self.call_from_thread(self._log, _ok("✓ Se alcanzó la fecha de inicio."))
+                    self.app.call_from_thread(self._log, _ok("✓ Se alcanzó la fecha de inicio."))
                     break
 
                 if should_stop:
-                    self.call_from_thread(self._log, _ok("✓ Descarga completa."))
+                    self.app.call_from_thread(self._log, _ok("✓ Descarga completa."))
                     break
 
         except Exception as e:
-            self.call_from_thread(self._on_download_error, str(e))
+            self.app.call_from_thread(self._on_download_error, str(e))
             return
         finally:
             try:
@@ -736,14 +746,14 @@ class MainScreen(Screen):
             except Exception:
                 pass
 
-        self.call_from_thread(self._on_download_complete, engine)
+        self.app.call_from_thread(self._on_download_complete, engine)
 
     # ── Callback de progreso (por archivo) ──
 
     def _progress_cb(self, current: int, total: int) -> None:
         """Llamado desde download_one para progreso del archivo actual."""
         try:
-            self.call_from_thread(self._update_progress_bar, current, total)
+            self.app.call_from_thread(self._update_progress_bar, current, total)
         except Exception:
             pass
 
@@ -803,10 +813,13 @@ class MainScreen(Screen):
         self._log(_fail(f"✗ Error: {error}"))
         self._set_status(f"[red]Error: {error}[/]")
         self._downloading = False
-        self.query_one("#btn-start").disabled = False
-        self.query_one("#btn-start").label = "▶  Reintentar"
-        self.query_one("#btn-pause").disabled = True
-        self.query_one("#btn-config").disabled = False
+        try:
+            self.query_one("#btn-start").disabled = False
+            self.query_one("#btn-start").label = "▶  Reintentar"
+            self.query_one("#btn-pause").disabled = True
+            self.query_one("#btn-config").disabled = False
+        except Exception:
+            pass
 
 
 # ── Pantalla de configuración ──
