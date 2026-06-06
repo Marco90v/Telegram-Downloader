@@ -390,6 +390,8 @@ class DownloadApp(App):
                     self._log(_ok("Se alcanzó la fecha de inicio."))
                     break
 
+        except asyncio.CancelledError:
+            self._log(_warn("Descarga cancelada."))
         except Exception as e:
             self._set_status(f"[bold red]ERROR: {e}[/]")
             self._log(_fail(f"Error inesperado: {e}"))
@@ -402,8 +404,11 @@ class DownloadApp(App):
                 await self.engine.disconnect()
             self._set_status("[bold green]✓ Completado[/]")
             self._log(_ok("\nDESCARGA FINALIZADA"))
-            self.query_one("#btn-pause", Button).disabled = True
-            self.query_one("#btn-start", Button).disabled = True
+            try:
+                self.query_one("#btn-pause", Button).disabled = True
+                self.query_one("#btn-start", Button).disabled = True
+            except Exception:
+                pass
 
     # ── UI updates ──
 
