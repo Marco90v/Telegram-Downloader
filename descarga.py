@@ -22,11 +22,13 @@ from core import (
     download_one,
     fmt_count,
     format_size,
+    list_catalog,
     load_config,
     load_dotenv,
     load_settings,
     media_path,
     media_size,
+    remove_catalog_entry,
 )
 
 # ===========================================================================
@@ -442,11 +444,91 @@ async def run(config: dict, settings: dict):
 
 
 # ===========================================================================
+# Catálogo (CLI)
+# ===========================================================================
+
+
+def _cmd_catalog_list():
+    """Muestra el contenido del catálogo."""
+    catalog = list_catalog()
+    chats = catalog.get("chats", {})
+    if not chats:
+        print(f"\n  {_warn('⚐')} El catálogo está vacío.\n")
+        return
+
+    print(f"\n  {_head('Catálogo de descargas')}")
+    print(f"  {'─' * 46}")
+    for name, info in sorted(chats.items()):
+        print(f"  {name}")
+        print(
+            f"    Mensajes: {info.get('total_count', '?')}  "
+            f"({info.get('oldest_id', '?')}→{info.get('newest_id', '?')})"
+        )
+        print(f"    Última descarga: {info.get('last_date', '?')}")
+    print()
+
+
+def _cmd_catalog_remove(chat_key: str, delete_files: bool = False):
+    """Elimina una entrada del catálogo."""
+    config = load_config()
+    output_dir = Path(config["OUTPUT_DIR"])
+
+    # Mostrar info antes de borrar
+    catalog = list_catalog()
+    info = catalog.get("chats", {}).get(chat_key)
+    if not info:
+        print(f"  {_err('✗')} No se encontró '{chat_key}' en el catálogo.\n")
+        return
+
+    print(f"\n  Chat: {chat_key}")
+    print(f"  Archivos procesados: {info.get('total_count', '?')}")
+    print(f"  Última descarga: {info.get('last_date', '?')}")
+
+    if delete_files:
+        chat_dir = output_dir / chat_key
+        size = ""
+        if chat_dir.exists():
+            total = sum(f.stat().st_size for f in chat_dir.rglob("*") if f.is_file())
+            size = f" ({format_size(total)})"
+        print(f"  {'⚠'} Se BORRARÁ también la carpeta: {chat_dir}/{size}")
+
+    if not ask_bool(f"\n  {'¿Eliminar?'} (s/n): "):
+        print(f"  {_warn('⚐')} Cancelado.\n")
+        return
+
+    ok = remove_catalog_entry(chat_key, output_dir, delete_files)
+    if ok:
+        print(f"  {_ok('✓')} Eliminado del catálogo: {chat_key}")
+        if delete_files:
+            print(f"  {_ok('✓')} Carpeta eliminada: {output_dir / chat_key}/")
+    else:
+        print(f"  {_err('✗')} No se encontró '{chat_key}'.\n")
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 
 
 def main():
+    import sys as _sys
+
+    # ── Comandos de catálogo ──
+    if len(_sys.argv) >= 2 and _sys.argv[1] == "--catalog":
+        if len(_sys.argv) >= 3 and _sys.argv[2] == "list":
+            _cmd_catalog_list()
+            return
+        if len(_sys.argv) >= 4 and _sys.argv[2] == "remove":
+            chat_key = _sys.argv[3]
+            delete_files = "--delete-files" in _sys.argv
+            _cmd_catalog_remove(chat_key, delete_files)
+            return
+        print("  Uso:")
+        print("    python descarga.py --catalog list")
+        print("    python descarga.py --catalog remove <chat> [--delete-files]")
+        print()
+        return
+
     load_dotenv()
     try:
         config = load_config()

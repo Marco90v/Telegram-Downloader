@@ -842,6 +842,7 @@ class ConfigScreen(Screen):
 
     #config-box {
         width: 100%;
+        max-width: 80;
         height: 1fr;
         overflow-y: auto;
         border: round $primary;
@@ -862,16 +863,14 @@ class ConfigScreen(Screen):
     }
 
     #date-labels, #date-inputs,
-    #batch-labels, #batch-inputs,
-    #switch-labels, #switch-inputs {
+    #batch-labels, #batch-inputs {
         height: auto;
         padding: 0;
         margin: 0;
     }
 
     #date-labels > Static, #date-inputs > Input,
-    #batch-labels > Static, #batch-inputs > Input,
-    #switch-labels > Static, #switch-inputs > Switch {
+    #batch-labels > Static, #batch-inputs > Input {
         width: 1fr;
         padding: 0;
         margin: 0;
@@ -933,12 +932,10 @@ class ConfigScreen(Screen):
                 prompt="Seleccionar acción",
             )
 
-            with Horizontal(id="switch-labels"):
-                yield Static("Auto-omitir duplicados:")
-                yield Static("Auto-continuar:")
-            with Horizontal(id="switch-inputs"):
-                yield Switch(id="cfg-skip-dupes")
-                yield Switch(id="cfg-auto-continue")
+            yield Static("Auto-omitir duplicados:")
+            yield Switch(id="cfg-skip-dupes")
+            yield Static("Auto-continuar:")
+            yield Switch(id="cfg-auto-continue")
 
         # ── Botones siempre visibles fuera del scroll ──
         with Horizontal(id="config-controls"):

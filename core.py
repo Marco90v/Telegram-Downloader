@@ -184,6 +184,49 @@ def update_catalog(
 
 
 # ===========================================================================
+# Gestión del catálogo
+# ===========================================================================
+
+
+def list_catalog() -> dict:
+    """Retorna el catálogo completo: {chats: {chat_key: {...}}}."""
+    return load_catalog()
+
+
+def remove_catalog_entry(
+    chat_key: str,
+    output_dir: Path | None = None,
+    delete_files: bool = False,
+) -> bool:
+    """Elimina una entrada del catálogo.
+
+    Args:
+        chat_key: nombre del chat (folder name).
+        output_dir: directorio base de descargas (para borrar carpeta).
+        delete_files: si True, borra también la carpeta del chat.
+
+    Returns:
+        True si se eliminó la entrada, False si no existía.
+    """
+    catalog = load_catalog()
+    chats = catalog.get("chats", {})
+    if chat_key not in chats:
+        return False
+
+    del chats[chat_key]
+    save_catalog(catalog)
+
+    if delete_files and output_dir is not None:
+        chat_dir = output_dir / chat_key
+        if chat_dir.exists():
+            import shutil
+
+            shutil.rmtree(chat_dir)
+
+    return True
+
+
+# ===========================================================================
 # Helpers de media
 # ===========================================================================
 
