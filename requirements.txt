@@ -5,3 +5,6 @@ telethon>=1.30
 
 # Desarrollo — linter + formatter
 ruff>=0.5
+
+# Pre-commit hooks (corre linter/formatter automáticamente antes de cada commit)
+pre-commit>=4.0
