@@ -837,30 +837,40 @@ class ConfigScreen(Screen):
 
     CSS = """
     ConfigScreen {
-        align: center middle;
+        align: center top;
     }
 
     #config-box {
-        width: 60;
+        width: 80%;
+        max-width: 100;
         height: 1fr;
         min-height: 10;
         overflow-y: auto;
         border: round $primary;
-        padding: 1 2;
+        padding: 0 2;
         margin: 1 2 0 2;
     }
 
     #config-title {
         text-style: bold;
-        margin-bottom: 1;
+        padding-top: 1;
+        margin-bottom: 0;
     }
 
     #config-status {
-        margin-bottom: 1;
+        min-height: 1;
+        margin-bottom: 0;
+    }
+
+    #config-box > Static {
+        margin-top: 0;
+        margin-bottom: 0;
+        padding-top: 0;
     }
 
     #date-row, #batch-row {
         height: auto;
+        margin-top: 0;
     }
 
     #date-row > Vertical, #batch-row > Vertical {
@@ -869,7 +879,7 @@ class ConfigScreen(Screen):
     }
 
     #settings-section {
-        margin-top: 1;
+        margin-top: 0;
         border-bottom: solid $primary 30%;
         padding-bottom: 0;
     }
@@ -877,7 +887,7 @@ class ConfigScreen(Screen):
     #switch-row {
         height: auto;
         align: left middle;
-        margin: 1 0;
+        margin: 0;
     }
 
     #switch-row > Static {
@@ -896,11 +906,11 @@ class ConfigScreen(Screen):
     }
 
     ConfigScreen Input {
-        margin: 0 0 1 0;
+        margin: 0;
     }
 
     ConfigScreen Select {
-        margin: 0 0 1 0;
+        margin: 0;
     }
     """
 
@@ -1051,8 +1061,7 @@ class ConfigScreen(Screen):
             # ── Persistir ──
             _save_settings(self.app.settings)
 
-            status.update("[bold green]✓ Guardado[/]")
-            self.set_timer(0.8, self.app.pop_screen)
+            self.app.pop_screen()
 
         except ValueError as e:
             status.update(f"[bold red]Error: formato inválido — {e}[/]")
