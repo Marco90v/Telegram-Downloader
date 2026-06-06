@@ -995,9 +995,14 @@ class ConfigScreen(Screen):
             raw_chat = self.query_one("#cfg-chat", Input).value.strip()
             if raw_chat:
                 try:
-                    self.app.config["TELEGRAM_TARGET_CHAT"] = int(raw_chat)
+                    chat_val = int(raw_chat)
                 except ValueError:
-                    self.app.config["TELEGRAM_TARGET_CHAT"] = raw_chat
+                    chat_val = raw_chat
+                self.app.config["TELEGRAM_TARGET_CHAT"] = chat_val
+                self.app.settings["TELEGRAM_TARGET_CHAT"] = chat_val
+            else:
+                self.app.config.pop("TELEGRAM_TARGET_CHAT", None)
+                self.app.settings["TELEGRAM_TARGET_CHAT"] = ""
 
             # ── Fechas ──
             raw_since = self.query_one("#cfg-since", Input).value.strip()
@@ -1019,7 +1024,9 @@ class ConfigScreen(Screen):
             # ── Batch ──
             raw_batch = self.query_one("#cfg-batch", Input).value.strip()
             if raw_batch:
-                self.app.config["BATCH_SIZE"] = int(raw_batch)
+                val = int(raw_batch)
+                self.app.config["BATCH_SIZE"] = val
+                self.app.settings["BATCH_SIZE"] = val
 
             # ── Settings ──
             large_action = self.query_one("#cfg-large-action", Select).value
@@ -1145,7 +1152,7 @@ class TUIApp(App):
     /* ── Log ── */
 
     #log {
-        height: 8;
+        height: 1fr;
         border: round $primary;
         margin: 1 1 0 1;
     }
@@ -1190,6 +1197,13 @@ class TUIApp(App):
             return
 
         self.settings = load_settings()
+
+        # Merge settings persistentes que pueden sobreescribir .env
+        if self.settings.get("TELEGRAM_TARGET_CHAT"):
+            self.config["TELEGRAM_TARGET_CHAT"] = self.settings["TELEGRAM_TARGET_CHAT"]
+        if self.settings.get("BATCH_SIZE"):
+            self.config["BATCH_SIZE"] = self.settings["BATCH_SIZE"]
+
         os.makedirs(self.config["OUTPUT_DIR"], exist_ok=True)
 
         if self._has_session():

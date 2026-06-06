@@ -31,6 +31,8 @@ DEFAULT_SETTINGS = {
     "auto_continue": False,
     "large_file_threshold_mb": 50,
     "large_file_action": "ask",
+    "TELEGRAM_TARGET_CHAT": "",
+    "BATCH_SIZE": 100,
 }
 
 # ===========================================================================
@@ -89,12 +91,11 @@ def load_config() -> dict:
     )
 
     raw = os.getenv("TELEGRAM_TARGET_CHAT", "").strip()
-    if not raw:
-        raise ValueError("Falta TELEGRAM_TARGET_CHAT en .env")
-    try:
-        config["TELEGRAM_TARGET_CHAT"] = int(raw)
-    except ValueError:
-        config["TELEGRAM_TARGET_CHAT"] = raw
+    if raw:
+        try:
+            config["TELEGRAM_TARGET_CHAT"] = int(raw)
+        except ValueError:
+            config["TELEGRAM_TARGET_CHAT"] = raw
 
     config["SESSION_NAME"] = os.getenv("TELEGRAM_SESSION_NAME", "sesion_telegram")
     config["OUTPUT_DIR"] = os.path.expanduser(
@@ -477,11 +478,16 @@ class DownloadEngine:
             entity, chat_key, output_dir, chat_name,
             fotos, videos, has_catalog, resume_info
         """
-        self.entity = await resolve_entity(self.client, self.config["TELEGRAM_TARGET_CHAT"])
+        chat_val = self.config.get("TELEGRAM_TARGET_CHAT", "")
+        if not chat_val:
+            raise ValueError(
+                "No hay chat configurado. Definí TELEGRAM_TARGET_CHAT en .env "
+                "o desde la configuración de la TUI."
+            )
+        self.entity = await resolve_entity(self.client, chat_val)
         if self.entity is None:
             raise ValueError(
-                f"No se pudo resolver el chat {self.config['TELEGRAM_TARGET_CHAT']}. "
-                "¿La sesión es miembro del chat?"
+                f"No se pudo resolver el chat {chat_val}. ¿La sesión es miembro del chat?"
             )
 
         self.output_dir, self.chat_key = await setup_output_dir(
