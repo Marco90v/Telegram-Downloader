@@ -404,18 +404,25 @@ async def _count_media(client, entity):
 # ===========================================================================
 
 
-async def run(config: dict, settings: dict):
-    """Ciclo principal de descarga por lotes adaptativos."""
-    client = TelegramClient(
-        config["SESSION_NAME"],
-        config["TELEGRAM_API_ID"],
-        config["TELEGRAM_API_HASH"],
-    )
+async def _resolve_entity(client: TelegramClient, chat_id: int | str) -> object | None:
+    """Resuelve un chat ID a un objeto Entity de Telegram.
 
-    await client.start()
-    print(f"  {_ok('✓')} Conectado a Telegram.\n")
+    Si el ID numérico falla, prueba con el prefijo -100 (canales/supergrupos
+    necesitan ese prefijo en el ID numérico).
+    """
+    try:
+        return await client.get_entity(chat_id)
+    except Exception:
+        if isinstance(chat_id, int) and chat_id < 0 and not str(chat_id).startswith("-100"):
+            try:
+                return await client.get_entity(int(f"-100{abs(chat_id)}"))
+            except Exception:
+                return None
+        return None
 
-    # ── Mostrar configuración activa ──
+
+def _show_config_banner(settings: dict):
+    """Muestra la configuración activa (modo, dupes, umbral de tamaño)."""
     action_label = {"ask": "preguntar", "download": "siempre", "skip": "omitir"}.get(
         settings["large_file_action"], settings["large_file_action"]
     )
@@ -431,34 +438,15 @@ async def run(config: dict, settings: dict):
     )
     print()
 
-    chat_id = config["TELEGRAM_TARGET_CHAT"]
 
-    # Intentar resolver el chat. Si falla, probar con prefijo -100
-    # (canales/supergrupos necesitan -100 delante del ID numérico).
-    try:
-        entity = await client.get_entity(chat_id)
-    except Exception:
-        if isinstance(chat_id, int) and chat_id < 0 and not str(chat_id).startswith("-100"):
-            try:
-                entity = await client.get_entity(int(f"-100{abs(chat_id)}"))
-            except Exception:
-                entity = None
-        else:
-            entity = None
+async def _setup_output_dir(client: TelegramClient, entity: object, config: dict) -> tuple:
+    """Crea y retorna la carpeta de salida con subcarpetas por chat.
 
-    if entity is None:
-        print(f"  ERROR: No se pudo resolver el chat {chat_id}.")
-        print("  Consejos:")
-        print("    - Si es un grupo/canal público, usá el username (sin @) en TELEGRAM_TARGET_CHAT")
-        print("    - Si es privado, usá el invite link completo (t.me/joinchat/...)")
-        print("    - La sesión tiene que ser miembro del chat")
-        await client.disconnect()
-        return
-
-    # ── Subcarpeta por chat ──
+    Si el chat es un sub-grupo vinculado a un canal, usa una estructura
+    de dos niveles: Canal / Sub-grupo. Retorna (output_dir, chat_key).
+    """
     chat_folder = _chat_folder_name(entity)
 
-    # Detectar si es un sub-grupo vinculado a un canal (discussion group)
     parent_folder = None
     linked_id = getattr(entity, "linked_chat_id", None)
     if linked_id:
@@ -472,17 +460,214 @@ async def run(config: dict, settings: dict):
         output_dir = Path(config["OUTPUT_DIR"]) / parent_folder / chat_folder
     else:
         output_dir = Path(config["OUTPUT_DIR"]) / chat_folder
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir, chat_folder or str(entity.id)
+
+
+def _handle_catalog_resume(catalog: dict, chat_key: str) -> tuple:
+    """Muestra el menú de reanudar si hay una sesión anterior.
+
+    Retorna (resume_newest, resume_oldest, resume_complete).
+    Si el usuario elige "empezar de nuevo" o no hay catálogo, todo None/False.
+    """
+    prev = catalog.get("chats", {}).get(chat_key)
+    if not prev:
+        return None, None, False
+
+    pn = prev.get("newest_id", 0)
+    po = prev.get("oldest_id", 0)
+    pc = prev.get("total_count", 0)
+    pd = prev.get("last_date", "?")
+
+    print(f"    Última sesión: {pc} archivos procesados (mensajes {po}→{pn}, {pd})")
+    print("    1. Reanudar — solo contenido nuevo")
+    print("    2. Reanudar — continuar también hacia atrás")
+    print("    3. Empezar de nuevo")
+    opt = input("  Opción (1/2/3): ").strip()
+    if opt in ("1", "2"):
+        print()
+        return pn, po, opt == "2"
+
+    return None, None, False
+
+
+async def _download_one(
+    client: TelegramClient,
+    msg: object,
+    output_dir: Path,
+    settings: dict,
+    pos: int,
+    batch_size: int,
+) -> dict:
+    """Descarga UN archivo multimedia con manejo completo de errores.
+
+    Flujo: dup → tamaño grande → descargar → FloodWait con retry → error.
+    Cada caso imprime su propia línea de estado.
+
+    Retorna {'status': 'ok'|'dup'|'skip'|'err', 'size': int}
+    """
+    fpath = _media_path(msg, output_dir)
+    icono = "📷" if msg.photo else "🎬"
+    w = len(str(batch_size))
+    inicio = f"  {icono} [{pos:>{w}}/{batch_size}] {fpath.name}"
+
+    # ── Ya existe (dup) ──
+    if fpath.exists():
+        try:
+            dup_size = format_size(fpath.stat().st_size)
+            print(f"  {_warn('⏭')} {inicio}  ({dup_size})  (ya existe)")
+        except OSError:
+            print(f"  {_warn('⏭')} {inicio}  (ya existe)")
+        return {"status": "dup", "size": 0}
+
+    # ── Archivo muy grande ──
+    fsize = _media_size(msg)
+    thr = settings["large_file_threshold_mb"] * 1024 * 1024
+    es_grande = fsize is not None and fsize > thr and thr > 0
+
+    if es_grande and settings["large_file_action"] == "skip":
+        print(f"  {_warn('⏭')} {inicio}  {_warn(format_size(fsize))}  (omitido por tamaño)")
+        return {"status": "skip", "size": 0}
+
+    if es_grande and settings["large_file_action"] == "ask":
+        if not ask_bool(f"{inicio}  ({format_size(fsize)})  ¿Descargar? (s/n): "):
+            return {"status": "skip", "size": 0}
+    else:
+        sys.stdout.write(inicio)
+        sys.stdout.flush()
+
+    # ── Descarga con retry en FloodWait ──
+    try:
+        ruta = await client.download_media(
+            msg,
+            file=str(fpath),
+            progress_callback=progress_factory(inicio),
+        )
+        if ruta is None:
+            fpath.unlink(missing_ok=True)
+            print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
+            return {"status": "err", "size": 0}
+
+        file_size = fpath.stat().st_size
+        print(f"{_clear_line()}{inicio}  {_ok('✓')}  {format_size(file_size)}")
+        return {"status": "ok", "size": file_size}
+
+    except errors.FloodWaitError as e:
+        espera = e.seconds
+        print(f"{_clear_line()}{inicio}  {_warn('⏳')} FloodWait {espera}s...")
+        await asyncio.sleep(espera)
+        # Reintento único
+        try:
+            ruta = await client.download_media(
+                msg,
+                file=str(fpath),
+                progress_callback=progress_factory(inicio),
+            )
+            if ruta:
+                file_size = fpath.stat().st_size
+                print(f"{_clear_line()}{inicio}  {_ok('✓')}  {format_size(file_size)}")
+                return {"status": "ok", "size": file_size}
+            fpath.unlink(missing_ok=True)
+            print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
+            return {"status": "err", "size": 0}
+        except Exception as e2:
+            print(f"{_clear_line()}{inicio}  {_err('✗')} {e2}")
+            return {"status": "err", "size": 0}
+
+    except Exception as e:
+        print(f"{_clear_line()}{inicio}  {_err('✗')} {e}")
+        return {"status": "err", "size": 0}
+
+
+def _print_batch_summary(batch_num: int, ok: int, dup: int, err: int, skip: int, byte: int):
+    """Resumen de un lote después de procesarlo."""
+    print(f"\n  ── Lote {batch_num} ──────────────────")
+    print(f"     Descargados: {ok}")
+    if skip:
+        print(f"     Omitidos:    {skip}")
+    if dup:
+        print(f"     Ya tenías:   {dup}")
+    if err:
+        print(f"  {_err('Errores:')}     {err}")
+    if byte:
+        print(f"     Tamaño:      {format_size(byte)}")
+
+
+def _print_final_summary(total: dict, output_dir: Path):
+    """Resumen global de toda la sesión."""
+    print(f"\n  {_head('═' * 46)}")
+    print(f"  {_head('DESCARGA FINALIZADA')}")
+    print(f"  Archivos descargados: {_ok(str(total['ok']))}")
+    if total["skip"]:
+        print(f"  {_warn('Omitidos (pesados):')}  {total['skip']}")
+    if total["dup"]:
+        print(f"  Ya existían:          {total['dup']}")
+    if total["err"]:
+        print(f"  {_err('Errores:')}              {total['err']}")
+    if total["bytes"]:
+        print(f"  Tamaño total:         {format_size(total['bytes'])}")
+    print(f"  Guardado en:          {output_dir}/")
+    print(f"  {_head('═' * 46)}\n")
+
+
+def _update_catalog(
+    catalog: dict,
+    chat_key: str,
+    min_id: int,
+    max_id: int,
+    total_new: int,
+):
+    """Actualiza el catálogo de sesión con los IDs procesados.
+
+    Si es la primera sesión (no existía el chat en el catálogo),
+    lo crea desde cero.
+    """
+    if max_id <= 0:
+        return
+    cat = catalog.setdefault("chats", {}).setdefault(chat_key, {})
+    cat["newest_id"] = max(cat.get("newest_id", 0), max_id)
+    cat["oldest_id"] = min(cat.get("oldest_id", float("inf")), min_id)
+    if cat["oldest_id"] == float("inf"):
+        cat["oldest_id"] = min_id
+    cat["last_date"] = datetime.now().strftime("%Y-%m-%d")
+    cat["total_count"] = cat.get("total_count", 0) + total_new
+    _save_catalog(catalog)
+
+
+async def run(config: dict, settings: dict):
+    """Ciclo principal de descarga por lotes adaptativos."""
+    client = TelegramClient(
+        config["SESSION_NAME"],
+        config["TELEGRAM_API_ID"],
+        config["TELEGRAM_API_HASH"],
+    )
+
+    await client.start()
+    print(f"  {_ok('✓')} Conectado a Telegram.\n")
+
+    _show_config_banner(settings)
+
+    entity = await _resolve_entity(client, config["TELEGRAM_TARGET_CHAT"])
+    if entity is None:
+        print(f"  ERROR: No se pudo resolver el chat {config['TELEGRAM_TARGET_CHAT']}.")
+        print("  Consejos:")
+        print("    - Si es un grupo/canal público, usá el username (sin @) en TELEGRAM_TARGET_CHAT")
+        print("    - Si es privado, usá el invite link completo (t.me/joinchat/...)")
+        print("    - La sesión tiene que ser miembro del chat")
+        await client.disconnect()
+        return
+
+    output_dir, chat_key = await _setup_output_dir(client, entity, config)
 
     # ── Contar multimedia disponible ──
     fotos, videos = await _count_media(client, entity)
 
+    chat_folder = _chat_folder_name(entity)
+
     # ── Banner enriquecido ──
     print(f"\n  {'═' * 46}")
-    if parent_folder and parent_folder != chat_folder:
-        print(f"  Chat:         {parent_folder} / {chat_folder}")
-    else:
-        print(f"  Chat:         {chat_folder}")
+    print(f"  Chat:         {chat_folder}")
     print(f"  Contenido:    {_fmt_count(fotos)} fotos · {_fmt_count(videos)} videos")
     if fotos is not None and videos is not None:
         total_media = fotos + videos
@@ -490,31 +675,9 @@ async def run(config: dict, settings: dict):
     print(f"  Lote de:      {config['BATCH_SIZE']} archivos")
     print(f"  Guardando en: {output_dir}/\n")
 
-    # ── Catálogo de sesiones anteriores ──
+    # ── Catálogo de sesiones anteriores (reanudar) ──
     catalog = _load_catalog()
-    chat_key = chat_folder or str(chat_id)
-    prev = catalog.get("chats", {}).get(chat_key)
-
-    resume_newest = None  # message_id más reciente ya procesado
-    resume_oldest = None  # message_id más antiguo ya procesado
-    resume_complete = False
-
-    if prev:
-        pn = prev.get("newest_id", 0)
-        po = prev.get("oldest_id", 0)
-        pc = prev.get("total_count", 0)
-        pd = prev.get("last_date", "?")
-
-        print(f"    Última sesión: {pc} archivos procesados (mensajes {po}→{pn}, {pd})")
-        print("    1. Reanudar — solo contenido nuevo")
-        print("    2. Reanudar — continuar también hacia atrás")
-        print("    3. Empezar de nuevo")
-        opt = input("  Opción (1/2/3): ").strip()
-        if opt in ("1", "2"):
-            resume_newest = pn
-            resume_oldest = po
-            resume_complete = opt == "2"
-            print()
+    resume_newest, resume_oldest, resume_complete = _handle_catalog_resume(catalog, chat_key)
 
     if resume_newest is None and not ask_bool("  ¿Empezamos? (s/n/q): "):
         print(f"  {_warn('⚐')} Omitido por el usuario.\n")
@@ -607,123 +770,29 @@ async def run(config: dict, settings: dict):
                     if pendientes and pendientes[-1].id < resume_oldest:
                         resume_newest = None
 
-                # ── Descargar cada uno (contador global en el lote) ──
-                w = len(str(config["BATCH_SIZE"]))
-
+                # ── Descargar cada uno usando _download_one() ──
                 for msg in pendientes:
-                    fpath = _media_path(msg, output_dir)
-                    pos = media_en_batch + 1  # posición global en el lote
-
-                    # ── Registrar IDs para el catálogo ──
                     session_min_id = min(session_min_id, msg.id)
                     session_max_id = max(session_max_id, msg.id)
 
-                    # ── Duplicado ──
-                    if fpath.exists():
-                        batch_dup += 1
-                        media_en_batch += 1
-                        try:
-                            dup_size = format_size(fpath.stat().st_size)
-                            print(
-                                f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)"
-                            )
-                        except OSError:
-                            print(
-                                f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)"
-                            )
-                        continue
-
-                    icono = "📷" if msg.photo else "🎬"
-                    inicio = f"  {icono} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}"
-
-                    # ── Preguntar si es muy pesado ──
-                    _fsize = _media_size(msg)
-                    _thr = settings["large_file_threshold_mb"] * 1024 * 1024
-                    _es_grande = _fsize is not None and _fsize > _thr and _thr > 0
-
-                    if _es_grande and settings["large_file_action"] == "skip":
-                        batch_skip += 1
-                        media_en_batch += 1
-                        print(
-                            f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  {_warn(format_size(_fsize))}  (omitido por tamaño)"
-                        )
-                        continue
-
-                    if _es_grande and settings["large_file_action"] == "ask":
-                        if not ask_bool(f"{inicio}  ({format_size(_fsize)})  ¿Descargar? (s/n): "):
-                            batch_skip += 1
-                            media_en_batch += 1
-                            continue
-                        # Dijo que sí → va directo a descargar (progress bar pisa la línea)
-                    else:
-                        sys.stdout.write(inicio)
-                        sys.stdout.flush()
-
-                    try:
-                        ruta = await client.download_media(
-                            msg,
-                            file=str(fpath),
-                            progress_callback=progress_factory(inicio),
-                        )
-
-                        if ruta is None:
-                            fpath.unlink(missing_ok=True)
-                            print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
-                            batch_err += 1
-                            media_en_batch += 1
-                            continue
-
-                        try:
-                            file_size = fpath.stat().st_size
-                            batch_bytes += file_size
-                            size_str = format_size(file_size)
-                        except OSError:
-                            size_str = ""
-
+                    r = await _download_one(
+                        client,
+                        msg,
+                        output_dir,
+                        settings,
+                        media_en_batch + 1,
+                        config["BATCH_SIZE"],
+                    )
+                    if r["status"] == "ok":
                         batch_ok += 1
-                        media_en_batch += 1
-                        if size_str:
-                            print(f"{_clear_line()}{inicio}  {_ok('✓')}  {size_str}")
-                        else:
-                            print(f"{_clear_line()}{inicio}  {_ok('✓')}")
-
-                    except errors.FloodWaitError as e:
-                        espera = e.seconds
-                        print(f"{_clear_line()}{inicio}  {_warn('⏳')} FloodWait {espera}s...")
-                        await asyncio.sleep(espera)
-                        # Reintento único
-                        try:
-                            ruta = await client.download_media(
-                                msg,
-                                file=str(fpath),
-                                progress_callback=progress_factory(inicio),
-                            )
-                            if ruta:
-                                try:
-                                    file_size = fpath.stat().st_size
-                                    batch_bytes += file_size
-                                    size_str = format_size(file_size)
-                                except OSError:
-                                    size_str = ""
-                                batch_ok += 1
-                                if size_str:
-                                    print(f"{_clear_line()}{inicio}  {_ok('✓')}  {size_str}")
-                                else:
-                                    print(f"{_clear_line()}{inicio}  {_ok('✓')}")
-                            else:
-                                fpath.unlink(missing_ok=True)
-                                print(f"{_clear_line()}{inicio}  {_err('✗')} no disponible")
-                                batch_err += 1
-                            media_en_batch += 1
-                        except Exception as e2:
-                            print(f"{_clear_line()}{inicio}  {_err('✗')} {e2}")
-                            batch_err += 1
-                            media_en_batch += 1
-
-                    except Exception as e:
-                        print(f"{_clear_line()}{inicio}  {_err('✗')} {e}")
+                        batch_bytes += r["size"]
+                    elif r["status"] == "dup":
+                        batch_dup += 1
+                    elif r["status"] == "skip":
+                        batch_skip += 1
+                    elif r["status"] == "err":
                         batch_err += 1
-                        media_en_batch += 1
+                    media_en_batch += 1
 
                 # Preparar siguiente sub-lote
                 offset_id = mensajes[-1].id
@@ -737,16 +806,7 @@ async def run(config: dict, settings: dict):
             total_skip += batch_skip
             total_bytes += batch_bytes
 
-            print(f"\n  ── Lote {batch_num} ──────────────────")
-            print(f"     Descargados: {batch_ok}")
-            if batch_skip:
-                print(f"     Omitidos:    {batch_skip}  (muy pesado)")
-            if batch_dup:
-                print(f"     Ya tenías:   {batch_dup}")
-            if batch_err:
-                print(f"  {_err('Errores:')}     {batch_err}")
-            if batch_bytes:
-                print(f"     Tamaño:      {format_size(batch_bytes)}")
+            _print_batch_summary(batch_num, batch_ok, batch_dup, batch_err, batch_skip, batch_bytes)
 
             # ── Decidir si seguimos ──
             if not seguir:
@@ -785,35 +845,18 @@ async def run(config: dict, settings: dict):
         await client.disconnect()
 
     # ── Resumen final (solo si hubo actividad) ──
-    if total_ok or total_dup or total_err or total_skip:
-        print(f"\n  {_head('═' * 46)}")
-        print(f"  {_head('DESCARGA FINALIZADA')}")
-        print(f"  Archivos descargados: {_ok(str(total_ok))}")
-        if total_skip:
-            print(f"  {_warn('Omitidos (pesados):')}  {total_skip}")
-        if total_dup:
-            print(f"  Ya existían:          {total_dup}")
-        if total_err:
-            print(f"  {_err('Errores:')}              {total_err}")
-        if total_bytes:
-            print(f"  Tamaño total:         {format_size(total_bytes)}")
-        print(f"  Guardado en:          {output_dir}/")
+    total = {
+        "ok": total_ok,
+        "skip": total_skip,
+        "dup": total_dup,
+        "err": total_err,
+        "bytes": total_bytes,
+    }
+    if any(v for v in total.values()):
+        _print_final_summary(total, output_dir)
+        _update_catalog(catalog, chat_key, session_min_id, session_max_id, sum(total.values()))
+        print(f"  {_ok('✓')} Catálogo actualizado — próximas ejecuciones podrán reanudar.")
         print(f"  {_head('═' * 46)}\n")
-
-        # ── Guardar catálogo ──
-        if session_max_id > 0:
-            chat_key = chat_folder or str(chat_id)
-            cat = catalog.setdefault("chats", {}).get(chat_key, {})
-            cat["newest_id"] = max(cat.get("newest_id", 0), session_max_id)
-            cat["oldest_id"] = min(cat.get("oldest_id", float("inf")), session_min_id)
-            if cat["oldest_id"] == float("inf"):
-                cat["oldest_id"] = session_min_id
-            cat["last_date"] = datetime.now().strftime("%Y-%m-%d")
-            cat["total_count"] = cat.get("total_count", 0) + total_ok + total_dup + total_skip
-            catalog.setdefault("chats", {})[chat_key] = cat
-            _save_catalog(catalog)
-            print(f"  {_ok('✓')} Catálogo actualizado — próximas ejecuciones podrán reanudar.")
-            print(f"  {_head('═' * 46)}\n")
 
 
 # ===========================================================================
