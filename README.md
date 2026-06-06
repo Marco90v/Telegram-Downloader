@@ -63,14 +63,16 @@ Se crea automáticamente al ejecutar. Editálo con cualquier editor de texto.
 ## Uso
 
 ```bash
-./run.sh
+./run.sh          # Interfaz CLI (por defecto)
+./run.sh --tui    # Interfaz TUI (experimental)
 ```
 
 O si preferís activar el venv manualmente:
 
 ```bash
 source venv/bin/activate
-python descarga.py
+python descarga.py    # CLI
+python tui.py         # TUI (experimental)
 ```
 
 1. Opcional: filtrar por rango de fechas
