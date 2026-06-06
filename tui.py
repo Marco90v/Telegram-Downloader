@@ -12,6 +12,7 @@ Requiere: pip install textual>=8.0
 
 import asyncio
 import os
+import threading
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -135,9 +136,6 @@ class DownloadApp(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self.engine: DownloadEngine | None = None
-        self.config: dict = {}
-        self.settings: dict = {}
         self.paused = False
         self.stop_requested = False
         self._started = False
@@ -198,217 +196,238 @@ class DownloadApp(App):
             self.action_quit()
 
     def _start_workflow(self) -> None:
-        """Desactiva botón de inicio y arranca el worker."""
+        """Desactiva botón de inicio y arranca el worker en thread."""
         if self._started:
             return
         self._started = True
         self.query_one("#btn-start", Button).disabled = True
         self.query_one("#btn-pause", Button).disabled = False
 
-        # Arrancar la corrutina
-        asyncio.create_task(self._run())
+        # Arrancar en thread separado (evita conflicto Textual/Telethon)
+        self.thread = threading.Thread(target=self._thread_run, daemon=True)
+        self.thread.start()
 
-    # ── Worker principal ──
+    def _thread_run(self) -> None:
+        """Corre en thread separado: crea su propio event loop."""
+        asyncio.run(self._async_run())
 
-    async def _run(self) -> None:
-        """Corrutina principal: conecta, prepara, descarga."""
+    async def _async_run(self) -> None:
+        """Async real: conecta, prepara, descarga (event loop propio)."""
+        engine = DownloadEngine(self.config, self.settings)
+        self.call_from_thread(self._log, _ok("Motor inicializado"))
+
+        # ── Conectar ──
+        self.call_from_thread(self._set_status, "[yellow]Conectando a Telegram...[/]")
         try:
-            self._set_status("[yellow]Inicializando motor...[/]")
-            self.engine = DownloadEngine(self.config, self.settings)
-            await asyncio.sleep(0)
-            self._log(_ok("Motor inicializado"))
-
-            # ── Conectar ──
-            self._set_status("[yellow]Conectando a Telegram...[/]")
-            await asyncio.sleep(0)
-            await self.engine.connect()
-            self._log(_ok("Conectado a Telegram"))
-
-            # ── Resolver chat ──
-            self._set_status("[yellow]Resolviendo chat...[/]")
-            await asyncio.sleep(0)
-            info = await self.engine.prepare()
-            chat_name = info["chat_name"]
-            fotos, videos = info["fotos"], info["videos"]
-            self._log(_ok(f"Chat: {chat_name}"))
-            if fotos is not None and videos is not None:
-                self._log(
-                    f"  {fmt_count(fotos)} fotos · {fmt_count(videos)} videos  ({fotos + videos:,} total)"
-                )
-
-            # ── Reanudación ──
-            resume_newest, resume_oldest, resume_complete = None, None, False
-            prev = self.engine.catalog.get("chats", {}).get(self.engine.chat_key)
-            if prev:
-                pc = prev.get("total_count", 0)
-                pd = prev.get("last_date", "?")
-                self._log(_warn(f"⏭ Sesión anterior: {pc} archivos ({pd})"))
-                resume_newest = prev.get("newest_id")
-                resume_oldest = prev.get("oldest_id")
-                resume_complete = True
-                self._log("  → Reanudando (completo)")
-
-            self._log("")  # línea en blanco
-
-            # ── Ciclo de descarga ──
-            offset_id = 0
-            since = self.config.get("_since")
-            until = self.config.get("_until")
-
-            self._set_status("[green]Descargando...[/]")
-            self.query_one("#progress-bar", ProgressBar).update(total=100, progress=0)
-            await asyncio.sleep(0)
-
-            while not self.stop_requested:
-                # ── Pausa ──
-                while self.paused and not self.stop_requested:
-                    await asyncio.sleep(0.2)
-                if self.stop_requested:
-                    break
-
-                batch_ok = batch_dup = batch_err = batch_skip = batch_bytes = 0
-                batch_count = 0
-                self._batch_num = getattr(self, "_batch_num", 0) + 1
-
-                self._log(_head(f"── Lote {self._batch_num} ──"))
-
-                # Fetch lote
-                batch_result = await self.engine.fetch_batch(
-                    offset_id=offset_id,
-                    limit=self.config["BATCH_SIZE"],
-                    since=since,
-                    until=until,
-                    resume_newest=resume_newest,
-                    resume_oldest=resume_oldest,
-                    resume_complete=resume_complete,
-                )
-
-                if batch_result["error"]:
-                    self._log(_fail(f"✗ {batch_result['error']}"))
-                    break
-
-                media_messages = batch_result["media"]
-                offset_id = batch_result["next_offset"]
-
-                if not media_messages:
-                    self._log(_ok("No hay más mensajes."))
-                    break
-
-                w = len(str(self.config["BATCH_SIZE"]))
-
-                for msg in media_messages:
-                    if self.stop_requested:
-                        break
-                    while self.paused and not self.stop_requested:
-                        await asyncio.sleep(0.2)
-                    if self.stop_requested:
-                        break
-
-                    self.engine.session_min_id = min(self.engine.session_min_id, msg.id)
-                    self.engine.session_max_id = max(self.engine.session_max_id, msg.id)
-                    pos = batch_count + 1
-
-                    icono = "📷" if msg.photo else "🎬"
-                    fpath = media_path(msg, self.engine.output_dir)
-                    file_name = fpath.name
-
-                    self.query_one("#current-file", Static).update(f"[bold]{icono}  {file_name}[/]")
-
-                    # Archivo grande
-                    fsize = media_size(msg)
-                    thr = self.settings["large_file_threshold_mb"] * 1024 * 1024
-                    if fsize is not None and fsize > thr and thr > 0:
-                        action = self.settings.get("large_file_action", "skip")
-                        if action in ("skip", "ask"):
-                            self.engine.add_result({"status": "skip", "size": 0})
-                            self._log(
-                                f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
-                                f"[yellow]⏭[/] {file_name} ({format_size(fsize)}, omitido)"
-                            )
-                            batch_skip += 1
-                            batch_count += 1
-                            continue
-
-                    # Descargar
-                    self._log(
-                        f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] [dim]{file_name}[/]"
-                    )
-                    await asyncio.sleep(0)
-
-                    result = await download_one(
-                        self.engine.client,
-                        msg,
-                        self.engine.output_dir,
-                        self.settings,
-                        progress_callback=lambda c, t, f=file_name: self._update_bar(c, t),
-                    )
-
-                    self.engine.add_result(result)
-
-                    if result["status"] == "ok":
-                        self._log(
-                            f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
-                            f"[green]✓[/] {file_name} ({format_size(result['size'])})"
-                        )
-                        batch_ok += 1
-                        batch_bytes += result["size"]
-                    elif result["status"] == "dup":
-                        sz = ""
-                        try:
-                            sz = f"({format_size(Path(result['path']).stat().st_size)})"
-                        except OSError:
-                            pass
-                        self._log(
-                            f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
-                            f"[yellow]⏭[/] {file_name} {sz} (ya existe)"
-                        )
-                        batch_dup += 1
-                    elif result["status"] == "err":
-                        err_msg = result.get("error", "desconocido")
-                        self._log(
-                            f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
-                            f"[red]✗[/] {file_name} — {err_msg}"
-                        )
-                        batch_err += 1
-
-                    batch_count += 1
-                    self._update_stats()
-
-                # Fin del lote
-                self._log(
-                    f"[bold]Lote {self._batch_num}:[/] "
-                    f"[green]{batch_ok}[/] descargados, "
-                    f"[yellow]{batch_skip} omitidos, {batch_dup} dup[/], "
-                    f"[red]{batch_err} errores[/] "
-                    f"({format_size(batch_bytes)})"
-                )
-
-                self.query_one("#current-file", Static).update("")
-                self.query_one("#progress-bar", ProgressBar).update(total=100, progress=0)
-
-                if batch_result.get("reached_start"):
-                    self._log(_ok("Se alcanzó la fecha de inicio."))
-                    break
-
-        except asyncio.CancelledError:
-            self._log(_warn("Descarga cancelada."))
+            await engine.connect()
         except Exception as e:
-            self._set_status(f"[bold red]ERROR: {e}[/]")
-            self._log(_fail(f"Error inesperado: {e}"))
-            import traceback
+            self.call_from_thread(self._log, _fail(f"Error al conectar: {e}"))
+            self.call_from_thread(self._set_status, f"[bold red]Error: {e}[/]")
+            return
+        self.call_from_thread(self._log, _ok("Conectado a Telegram"))
 
-            for line in traceback.format_exc().splitlines():
-                self._log(f"[dim]{line}[/]")
-        finally:
-            if self.engine:
-                await self.engine.disconnect()
-            self._set_status("[bold green]✓ Completado[/]")
-            self._log(_ok("\nDESCARGA FINALIZADA"))
-            try:
-                self.query_one("#btn-pause", Button).disabled = True
-                self.query_one("#btn-start", Button).disabled = True
-            except Exception:
-                pass
+        # ── Resolver chat ──
+        self.call_from_thread(self._set_status, "[yellow]Resolviendo chat...[/]")
+        try:
+            info = await engine.prepare()
+        except Exception as e:
+            self.call_from_thread(self._log, _fail(f"Error al preparar: {e}"))
+            self.call_from_thread(self._set_status, f"[bold red]Error: {e}[/]")
+            return
+        chat_name = info["chat_name"]
+        fotos, videos = info["fotos"], info["videos"]
+        self.call_from_thread(self._log, _ok(f"Chat: {chat_name}"))
+        if fotos is not None and videos is not None:
+            self.call_from_thread(
+                self._log,
+                f"  {fmt_count(fotos)} fotos · {fmt_count(videos)} videos  ({fotos + videos:,} total)",
+            )
+
+        # ── Reanudación ──
+        resume_newest, resume_oldest, resume_complete = None, None, False
+        prev = engine.catalog.get("chats", {}).get(engine.chat_key)
+        if prev:
+            pc = prev.get("total_count", 0)
+            pd = prev.get("last_date", "?")
+            self.call_from_thread(self._log, _warn(f"⏭ Sesión anterior: {pc} archivos ({pd})"))
+            resume_newest = prev.get("newest_id")
+            resume_oldest = prev.get("oldest_id")
+            resume_complete = True
+            self.call_from_thread(self._log, "  → Reanudando (completo)")
+
+        self.call_from_thread(self._log, "")
+
+        # ── Ciclo de descarga ──
+        offset_id = 0
+        since = self.config.get("_since")
+        until = self.config.get("_until")
+
+        self.call_from_thread(self._set_status, "[green]Descargando...[/]")
+        self.call_from_thread(
+            lambda: self.query_one("#progress-bar", ProgressBar).update(total=100, progress=0)
+        )
+
+        while not self._is_stopped():
+            # ── Pausa ──
+            while self._is_paused() and not self._is_stopped():
+                await asyncio.sleep(0.2)
+            if self._is_stopped():
+                break
+
+            batch_ok = batch_dup = batch_err = batch_skip = batch_bytes = 0
+            batch_count = 0
+            self._inc_batch()
+
+            self.call_from_thread(self._log, _head(f"── Lote {self._batch_num} ──"))
+
+            # Fetch lote
+            batch_result = await engine.fetch_batch(
+                offset_id=offset_id,
+                limit=self.config["BATCH_SIZE"],
+                since=since,
+                until=until,
+                resume_newest=resume_newest,
+                resume_oldest=resume_oldest,
+                resume_complete=resume_complete,
+            )
+
+            if batch_result["error"]:
+                self.call_from_thread(self._log, _fail(f"✗ {batch_result['error']}"))
+                break
+
+            media_messages = batch_result["media"]
+            offset_id = batch_result["next_offset"]
+
+            if not media_messages:
+                self.call_from_thread(self._log, _ok("No hay más mensajes."))
+                break
+
+            w = len(str(self.config["BATCH_SIZE"]))
+
+            for msg in media_messages:
+                if self._is_stopped():
+                    break
+                while self._is_paused() and not self._is_stopped():
+                    await asyncio.sleep(0.2)
+                if self._is_stopped():
+                    break
+
+                engine.session_min_id = min(engine.session_min_id, msg.id)
+                engine.session_max_id = max(engine.session_max_id, msg.id)
+                pos = batch_count + 1
+
+                icono = "📷" if msg.photo else "🎬"
+                fpath = media_path(msg, engine.output_dir)
+                file_name = fpath.name
+
+                self.call_from_thread(
+                    lambda fn=file_name, ic=icono: self.query_one("#current-file", Static).update(
+                        f"[bold]{ic}  {fn}[/]"
+                    )
+                )
+
+                # Archivo grande
+                fsize = media_size(msg)
+                thr = self.settings["large_file_threshold_mb"] * 1024 * 1024
+                if fsize is not None and fsize > thr and thr > 0:
+                    action = self.settings.get("large_file_action", "skip")
+                    if action in ("skip", "ask"):
+                        engine.add_result({"status": "skip", "size": 0})
+                        self.call_from_thread(
+                            self._log,
+                            f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
+                            f"[yellow]⏭[/] {file_name} ({format_size(fsize)}, omitido)",
+                        )
+                        batch_skip += 1
+                        batch_count += 1
+                        continue
+
+                # Descargar
+                self.call_from_thread(
+                    self._log,
+                    f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] [dim]{file_name}[/]",
+                )
+
+                result = await download_one(
+                    engine.client,
+                    msg,
+                    engine.output_dir,
+                    self.settings,
+                    progress_callback=lambda c, t, fn=file_name: self.call_from_thread(
+                        self._update_bar, c, t
+                    ),
+                )
+
+                engine.add_result(result)
+
+                if result["status"] == "ok":
+                    self.call_from_thread(
+                        self._log,
+                        f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
+                        f"[green]✓[/] {file_name} ({format_size(result['size'])})",
+                    )
+                    batch_ok += 1
+                    batch_bytes += result["size"]
+                elif result["status"] == "dup":
+                    sz = ""
+                    try:
+                        sz = f"({format_size(Path(result['path']).stat().st_size)})"
+                    except OSError:
+                        pass
+                    self.call_from_thread(
+                        self._log,
+                        f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
+                        f"[yellow]⏭[/] {file_name} {sz} (ya existe)",
+                    )
+                    batch_dup += 1
+                elif result["status"] == "err":
+                    err_msg = result.get("error", "desconocido")
+                    self.call_from_thread(
+                        self._log,
+                        f"  {icono} [{pos:>{w}}/{self.config['BATCH_SIZE']}] "
+                        f"[red]✗[/] {file_name} — {err_msg}",
+                    )
+                    batch_err += 1
+
+                batch_count += 1
+                self.call_from_thread(self._update_stats_ui, engine.totals)
+
+            # Fin del lote
+            self.call_from_thread(
+                self._log,
+                f"[bold]Lote {self._batch_num}:[/] "
+                f"[green]{batch_ok}[/] descargados, "
+                f"[yellow]{batch_skip} omitidos, {batch_dup} dup[/], "
+                f"[red]{batch_err} errores[/] "
+                f"({format_size(batch_bytes)})",
+            )
+
+            self.call_from_thread(lambda: self.query_one("#current-file", Static).update(""))
+            self.call_from_thread(
+                lambda: self.query_one("#progress-bar", ProgressBar).update(total=100, progress=0)
+            )
+
+            if batch_result.get("reached_start"):
+                self.call_from_thread(self._log, _ok("Se alcanzó la fecha de inicio."))
+                break
+
+        # ── Limpieza final ──
+        await engine.disconnect()
+        self.call_from_thread(self._set_status, "[bold green]✓ Completado[/]")
+        self.call_from_thread(self._log, _ok("\nDESCARGA FINALIZADA"))
+        self.call_from_thread(lambda: self.query_one("#btn-pause", Button).disabled)
+        self.call_from_thread(lambda: self.query_one("#btn-start", Button).disabled)
+
+    # ── Helpers thread-safe ──
+
+    def _is_paused(self) -> bool:
+        return self.paused
+
+    def _is_stopped(self) -> bool:
+        return self.stop_requested
+
+    def _inc_batch(self) -> None:
+        self._batch_num = getattr(self, "_batch_num", 0) + 1
 
     # ── UI updates ──
 
@@ -435,20 +454,17 @@ class DownloadApp(App):
         except Exception:
             pass
 
-    def _update_stats(self) -> None:
-        if not self.engine:
-            return
-        t = self.engine.totals
+    def _update_stats_ui(self, totals: dict) -> None:
         try:
             self.query_one("#stats", Static).update(
                 f"[bold]Estadísticas[/]\n\n"
-                f"✓ Descargados: [green]{t['ok']}[/]\n"
-                f"⏭ Ya existían: [yellow]{t['dup']}[/]\n"
-                f"⏭ Omitidos: [yellow]{t['skip']}[/]\n"
-                f"✗ Errores: [red]{t['err']}[/]\n"
+                f"✓ Descargados: [green]{totals['ok']}[/]\n"
+                f"⏭ Ya existían: [yellow]{totals['dup']}[/]\n"
+                f"⏭ Omitidos: [yellow]{totals['skip']}[/]\n"
+                f"✗ Errores: [red]{totals['err']}[/]\n"
                 f"───\n"
-                f"Total: [bold]{t['ok'] + t['dup'] + t['err'] + t['skip']}[/]\n"
-                f"Tamaño: [bold]{format_size(t['bytes'])}[/]"
+                f"Total: [bold]{totals['ok'] + totals['dup'] + totals['err'] + totals['skip']}[/]\n"
+                f"Tamaño: [bold]{format_size(totals['bytes'])}[/]"
             )
         except Exception:
             pass
