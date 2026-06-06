@@ -892,7 +892,7 @@ class ConfigScreen(Screen):
     ConfigScreen Select,
     ConfigScreen Button,
     ConfigScreen Switch {
-        margin: 0;
+        margin: 0 0 1 0;
         padding: 0;
     }
     """
