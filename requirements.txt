@@ -2,3 +2,6 @@
 # Instalar con: pip install -r requirements.txt
 
 telethon>=1.30
+
+# Desarrollo — linter + formatter
+ruff>=0.5

@@ -21,34 +21,47 @@ from telethon import TelegramClient, errors
 from telethon.tl.functions.messages import SearchRequest
 from telethon.tl.types import InputMessagesFilterPhotos, InputMessagesFilterVideo
 
-
 # ===========================================================================
 # Colores ANSI (compatibles con cualquier terminal moderna)
 # ===========================================================================
 # Sin dependencias, puro escape codes. Las funciones devuelven strings
 # listas para print(). NO se usa color en operators, solo en UI.
 
+
 class _c:
     """ANSI escape codes — usa _c.GREEN + texto + _c.RST como marcador."""
-    RST   = "\033[0m"
-    BOLD  = "\033[1m"
-    DIM   = "\033[2m"
+
+    RST = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
     GREEN = "\033[32m"
-    YEL   = "\033[33m"
-    RED   = "\033[31m"
-    CYAN  = "\033[36m"
-    MAG   = "\033[35m"
+    YEL = "\033[33m"
+    RED = "\033[31m"
+    CYAN = "\033[36m"
+    MAG = "\033[35m"
+
 
 # Convenience: wrapper corto para emojis/iconos de estado
-def _ok(t: str) -> str:   return f"{_c.GREEN}{t}{_c.RST}"
-def _warn(t: str) -> str: return f"{_c.YEL}{t}{_c.RST}"
-def _err(t: str) -> str:  return f"{_c.RED}{t}{_c.RST}"
-def _head(t: str) -> str: return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
+def _ok(t: str) -> str:
+    return f"{_c.GREEN}{t}{_c.RST}"
+
+
+def _warn(t: str) -> str:
+    return f"{_c.YEL}{t}{_c.RST}"
+
+
+def _err(t: str) -> str:
+    return f"{_c.RED}{t}{_c.RST}"
+
+
+def _head(t: str) -> str:
+    return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
 
 
 # ===========================================================================
 # .env parser (zero dependencies)
 # ===========================================================================
+
 
 def _load_dotenv(path: str = ".env") -> None:
     """Carga variables de entorno desde un archivo .env (formato KEY=VAL)."""
@@ -72,6 +85,7 @@ def _load_dotenv(path: str = ".env") -> None:
 # ===========================================================================
 # Config
 # ===========================================================================
+
 
 def load_config() -> dict:
     """Carga y valida configuración desde variables de entorno."""
@@ -116,6 +130,7 @@ def load_config() -> dict:
 # Interacción con el usuario
 # ===========================================================================
 
+
 def ask_bool(prompt: str) -> bool:
     """Pregunta sí/no al usuario. Bucle hasta respuesta válida."""
     while True:
@@ -156,7 +171,7 @@ def ask_date_filter():
 
 def ask_continue(total_downloaded: int) -> bool:
     """Pregunta si seguir con el siguiente lote."""
-    print(f"\n  ─────────────────────────────────────────────")
+    print("\n  ─────────────────────────────────────────────")
     print(f"  Descargados hasta ahora: {total_downloaded} archivos")
     return ask_bool("  ¿Seguir? (s/n/q): ")
 
@@ -165,12 +180,13 @@ def ask_continue(total_downloaded: int) -> bool:
 # Utilidades
 # ===========================================================================
 
+
 def format_size(bytes_: int) -> str:
     """Formatea bytes a unidad legible."""
-    if bytes_ >= 1024 ** 3:
-        return f"{bytes_ / 1024 ** 3:.2f} GB"
-    if bytes_ >= 1024 ** 2:
-        return f"{bytes_ / 1024 ** 2:.1f} MB"
+    if bytes_ >= 1024**3:
+        return f"{bytes_ / 1024**3:.2f} GB"
+    if bytes_ >= 1024**2:
+        return f"{bytes_ / 1024**2:.1f} MB"
     if bytes_ >= 1024:
         return f"{bytes_ / 1024:.0f} KB"
     return f"{bytes_} B"
@@ -192,6 +208,7 @@ def progress_factory(prefix: str, show_size: bool = True):
     Muestra barra de progreso, porcentaje y (opcionalmente) bytes descargados/total.
     Uso: progress_factory('📷 [  3/80 ] nombre.jpg')(current, total)
     """
+
     def cb(current: int, total: int):
         if total <= 0:
             return
@@ -203,24 +220,29 @@ def progress_factory(prefix: str, show_size: bool = True):
         if show_size:
             line += f"  {format_size(current)}/{format_size(total)}"
         print(line, end="", flush=True)
+
     return cb
 
 
 def _media_ext(msg) -> str:
     """Determina la extensión del archivo multimedia de un mensaje."""
-    if msg.photo and getattr(msg.photo, 'ext', None):
+    if msg.photo and getattr(msg.photo, "ext", None):
         return str(msg.photo.ext)
-    if msg.video and getattr(msg.video, 'ext', None):
+    if msg.video and getattr(msg.video, "ext", None):
         return str(msg.video.ext)
     # Fallback por mime type
-    doc = getattr(msg, 'document', None)
+    doc = getattr(msg, "document", None)
     if doc and doc.mime_type:
         mime_map = {
-            'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
-            'video/mp4': '.mp4', 'video/x-matroska': '.mkv', 'video/avi': '.avi',
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "video/mp4": ".mp4",
+            "video/x-matroska": ".mkv",
+            "video/avi": ".avi",
         }
-        return mime_map.get(doc.mime_type, '.bin')
-    return '.jpg'
+        return mime_map.get(doc.mime_type, ".bin")
+    return ".jpg"
 
 
 def _media_path(msg, output_dir: Path) -> Path:
@@ -229,23 +251,23 @@ def _media_path(msg, output_dir: Path) -> Path:
     El nombre incluye fecha + message_id para evitar duplicados y
     ordenar cronológicamente.
     """
-    fecha = msg.date.strftime('%Y%m%d') if msg.date else '00000000'
+    fecha = msg.date.strftime("%Y%m%d") if msg.date else "00000000"
     return output_dir / f"{fecha}_{msg.id}{_media_ext(msg)}"
 
 
 def _chat_folder_name(entity) -> str:
     """Deriva un nombre de carpeta legible y seguro desde la entidad del chat."""
     name = None
-    if hasattr(entity, 'title') and entity.title:
+    if hasattr(entity, "title") and entity.title:
         name = entity.title
-    elif hasattr(entity, 'username') and entity.username:
+    elif hasattr(entity, "username") and entity.username:
         name = entity.username
     else:
-        name = f"chat_{entity.id}" if hasattr(entity, 'id') else "desconocido"
+        name = f"chat_{entity.id}" if hasattr(entity, "id") else "desconocido"
 
     # Solo caracteres seguros para sistema de archivos
-    safe = "".join(c if c.isalnum() or c in ' _-.' else '_' for c in name)
-    return safe.strip().strip('.')[:60] or "telegram_chat"
+    safe = "".join(c if c.isalnum() or c in " _-." else "_" for c in name)
+    return safe.strip().strip(".")[:60] or "telegram_chat"
 
 
 def is_media_wanted(msg) -> bool:
@@ -271,7 +293,7 @@ def _media_size(msg) -> int | None:
     if msg.photo and msg.photo.sizes:
         # El último size suele ser la resolución completa
         biggest = msg.photo.sizes[-1]
-        if hasattr(biggest, 'size'):
+        if hasattr(biggest, "size"):
             return biggest.size
     return None
 
@@ -284,10 +306,10 @@ SETTINGS_PATH = Path(__file__).parent / "settings.json"
 CATALOG_PATH = Path(__file__).parent / "catalog.json"
 
 DEFAULT_SETTINGS = {
-    "auto_skip_all_dupes": False,       # Si lote completo es dupe/omitido, no preguntar (auto-continúa)
-    "auto_continue": False,             # Modo silencioso total: nunca preguntar entre lotes
-    "large_file_threshold_mb": 50,      # Umbral en MB (modos "skip" o "ask" ignoran archivos > esto)
-    "large_file_action": "ask",         # "ask" | "download" | "skip"
+    "auto_skip_all_dupes": False,  # Si lote completo es dupe/omitido, no preguntar (auto-continúa)
+    "auto_continue": False,  # Modo silencioso total: nunca preguntar entre lotes
+    "large_file_threshold_mb": 50,  # Umbral en MB (modos "skip" o "ask" ignoran archivos > esto)
+    "large_file_action": "ask",  # "ask" | "download" | "skip"
 }
 
 
@@ -307,12 +329,12 @@ def _load_settings() -> dict:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_SETTINGS, f, indent=2)
             print(f"  {_ok('✓')} Creado settings.json")
-            print(f"    └ Editálo para cambiar el comportamiento sin tocar código.")
-            print(f"    └ Opciones:")
-            print(f"    └   large_file_action → ask | download | skip")
-            print(f"    └   large_file_threshold_mb → número (MB)")
-            print(f"    └   auto_skip_all_dupes → true | false")
-            print(f"    └   auto_continue → true | false (modo silencioso total)")
+            print("    └ Editálo para cambiar el comportamiento sin tocar código.")
+            print("    └ Opciones:")
+            print("    └   large_file_action → ask | download | skip")
+            print("    └   large_file_threshold_mb → número (MB)")
+            print("    └   auto_skip_all_dupes → true | false")
+            print("    └   auto_continue → true | false (modo silencioso total)")
         except OSError as e:
             print(f"  {_warn('⚠')} No se pudo crear settings.json: {e}")
     return dict(DEFAULT_SETTINGS)
@@ -323,6 +345,7 @@ def _load_settings() -> dict:
 # ===========================================================================
 # Registra el rango de message_ids procesados por chat para poder reanudar
 # en sesiones futuras sin re-descargar todo.
+
 
 def _load_catalog() -> dict:
     """Carga catalog.json o devuelve un catálogo vacío."""
@@ -347,20 +370,30 @@ def _save_catalog(catalog: dict) -> None:
 async def _count_media(client, entity):
     """Cuenta fotos y videos via SearchRequest server-side (sin descargar nada)."""
     try:
-        fotos = await client(SearchRequest(
-            peer=entity, q='', filter=InputMessagesFilterPhotos(), limit=1,
-        ))
-        videos = await client(SearchRequest(
-            peer=entity, q='', filter=InputMessagesFilterVideo(), limit=1,
-        ))
+        fotos = await client(
+            SearchRequest(
+                peer=entity,
+                q="",
+                filter=InputMessagesFilterPhotos(),
+                limit=1,
+            )
+        )
+        videos = await client(
+            SearchRequest(
+                peer=entity,
+                q="",
+                filter=InputMessagesFilterVideo(),
+                limit=1,
+            )
+        )
         # SearchRequest devuelve .count en la mayoría de los casos;
         # .total es alternativa para get_messages.
-        total_fotos = getattr(fotos, 'count', None)
+        total_fotos = getattr(fotos, "count", None)
         if total_fotos is None:
-            total_fotos = getattr(fotos, 'total', 0) or 0
-        total_videos = getattr(videos, 'count', None)
+            total_fotos = getattr(fotos, "total", 0) or 0
+        total_videos = getattr(videos, "count", None)
         if total_videos is None:
-            total_videos = getattr(videos, 'total', 0) or 0
+            total_videos = getattr(videos, "total", 0) or 0
         return total_fotos, total_videos
     except Exception:
         return None, None
@@ -369,6 +402,7 @@ async def _count_media(client, entity):
 # ===========================================================================
 # Lógica de descarga
 # ===========================================================================
+
 
 async def run(config: dict, settings: dict):
     """Ciclo principal de descarga por lotes adaptativos."""
@@ -383,12 +417,18 @@ async def run(config: dict, settings: dict):
 
     # ── Mostrar configuración activa ──
     action_label = {"ask": "preguntar", "download": "siempre", "skip": "omitir"}.get(
-        settings["large_file_action"], settings["large_file_action"])
-    mode = "silencioso" if settings.get("auto_continue") else \
-           ("auto-skip" if settings.get("auto_skip_all_dupes") else "normal")
-    print(f"  {_head('⚙')} Modo: {mode}  |  "
-          f"Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}  |  "
-          f"Archivos >{settings['large_file_threshold_mb']}MB: {action_label}")
+        settings["large_file_action"], settings["large_file_action"]
+    )
+    mode = (
+        "silencioso"
+        if settings.get("auto_continue")
+        else ("auto-skip" if settings.get("auto_skip_all_dupes") else "normal")
+    )
+    print(
+        f"  {_head('⚙')} Modo: {mode}  |  "
+        f"Auto-skip dupes: {'ON' if settings['auto_skip_all_dupes'] else 'OFF'}  |  "
+        f"Archivos >{settings['large_file_threshold_mb']}MB: {action_label}"
+    )
     print()
 
     chat_id = config["TELEGRAM_TARGET_CHAT"]
@@ -420,7 +460,7 @@ async def run(config: dict, settings: dict):
 
     # Detectar si es un sub-grupo vinculado a un canal (discussion group)
     parent_folder = None
-    linked_id = getattr(entity, 'linked_chat_id', None)
+    linked_id = getattr(entity, "linked_chat_id", None)
     if linked_id:
         try:
             parent_entity = await client.get_entity(linked_id)
@@ -455,8 +495,8 @@ async def run(config: dict, settings: dict):
     chat_key = chat_folder or str(chat_id)
     prev = catalog.get("chats", {}).get(chat_key)
 
-    resume_newest = None   # message_id más reciente ya procesado
-    resume_oldest = None   # message_id más antiguo ya procesado
+    resume_newest = None  # message_id más reciente ya procesado
+    resume_oldest = None  # message_id más antiguo ya procesado
     resume_complete = False
 
     if prev:
@@ -465,16 +505,15 @@ async def run(config: dict, settings: dict):
         pc = prev.get("total_count", 0)
         pd = prev.get("last_date", "?")
 
-        print(f"    Última sesión: {pc} archivos procesados "
-              f"(mensajes {po}→{pn}, {pd})")
-        print(f"    1. Reanudar — solo contenido nuevo")
-        print(f"    2. Reanudar — continuar también hacia atrás")
-        print(f"    3. Empezar de nuevo")
+        print(f"    Última sesión: {pc} archivos procesados (mensajes {po}→{pn}, {pd})")
+        print("    1. Reanudar — solo contenido nuevo")
+        print("    2. Reanudar — continuar también hacia atrás")
+        print("    3. Empezar de nuevo")
         opt = input("  Opción (1/2/3): ").strip()
         if opt in ("1", "2"):
             resume_newest = pn
             resume_oldest = po
-            resume_complete = (opt == "2")
+            resume_complete = opt == "2"
             print()
 
     if resume_newest is None and not ask_bool("  ¿Empezamos? (s/n/q): "):
@@ -489,27 +528,29 @@ async def run(config: dict, settings: dict):
     since = config.get("_since")
     until = config.get("_until")
     seguir = True
-    session_min_id = float('inf')
+    session_min_id = float("inf")
     session_max_id = 0
 
     try:
         while seguir:
             batch_num += 1
             batch_ok = batch_dup = batch_err = batch_bytes = batch_skip = 0
-            media_en_batch = 0          # multimedia procesados en este lote
+            media_en_batch = 0  # multimedia procesados en este lote
             llegue_al_inicio = False
 
             print(f"\n  {'─' * 46}")
             print(f"  Lote {batch_num} — juntando {config['BATCH_SIZE']} archivos multimedia...")
 
             # ── Sub-lotes adaptativos ──
-            while media_en_batch < config['BATCH_SIZE']:
-                faltan = config['BATCH_SIZE'] - media_en_batch
+            while media_en_batch < config["BATCH_SIZE"]:
+                faltan = config["BATCH_SIZE"] - media_en_batch
                 pedir = min(100, faltan)
 
                 if media_en_batch > 0:
-                    print(f"  → Acumulando: {media_en_batch}/{config['BATCH_SIZE']}, "
-                          f"faltan {faltan}, pidiendo {pedir} más…")
+                    print(
+                        f"  → Acumulando: {media_en_batch}/{config['BATCH_SIZE']}, "
+                        f"faltan {faltan}, pidiendo {pedir} más…"
+                    )
 
                 kwargs = dict(limit=pedir)
                 if offset_id:
@@ -521,7 +562,9 @@ async def run(config: dict, settings: dict):
                     mensajes = await client.get_messages(entity, **kwargs)
                 except errors.FloodWaitError as e:
                     espera = e.seconds
-                    print(f"  {_warn('⚠')} Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)...")
+                    print(
+                        f"  {_warn('⚠')} Límite de requests. Esperar {espera}s ({espera / 60:.1f} min)..."
+                    )
                     await asyncio.sleep(espera)
                     continue
                 except Exception as e:
@@ -550,8 +593,9 @@ async def run(config: dict, settings: dict):
                 # ── Resume: filtrar mensajes ya procesados ──
                 if resume_newest is not None:
                     _before = len(pendientes)
-                    pendientes = [m for m in pendientes
-                                  if not (resume_oldest <= m.id <= resume_newest)]
+                    pendientes = [
+                        m for m in pendientes if not (resume_oldest <= m.id <= resume_newest)
+                    ]
                     if not pendientes and _before > 0:
                         if resume_complete:
                             offset_id = resume_oldest
@@ -564,11 +608,11 @@ async def run(config: dict, settings: dict):
                         resume_newest = None
 
                 # ── Descargar cada uno (contador global en el lote) ──
-                w = len(str(config['BATCH_SIZE']))
+                w = len(str(config["BATCH_SIZE"]))
 
                 for msg in pendientes:
                     fpath = _media_path(msg, output_dir)
-                    pos = media_en_batch + 1   # posición global en el lote
+                    pos = media_en_batch + 1  # posición global en el lote
 
                     # ── Registrar IDs para el catálogo ──
                     session_min_id = min(session_min_id, msg.id)
@@ -580,9 +624,13 @@ async def run(config: dict, settings: dict):
                         media_en_batch += 1
                         try:
                             dup_size = format_size(fpath.stat().st_size)
-                            print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)")
+                            print(
+                                f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  ({dup_size})  (ya existe)"
+                            )
                         except OSError:
-                            print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)")
+                            print(
+                                f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  (ya existe)"
+                            )
                         continue
 
                     icono = "📷" if msg.photo else "🎬"
@@ -596,7 +644,9 @@ async def run(config: dict, settings: dict):
                     if _es_grande and settings["large_file_action"] == "skip":
                         batch_skip += 1
                         media_en_batch += 1
-                        print(f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  {_warn(format_size(_fsize))}  (omitido por tamaño)")
+                        print(
+                            f"  {_warn('⏭')} [{pos:>{w}}/{config['BATCH_SIZE']}] {fpath.name}  {_warn(format_size(_fsize))}  (omitido por tamaño)"
+                        )
                         continue
 
                     if _es_grande and settings["large_file_action"] == "ask":
@@ -611,7 +661,8 @@ async def run(config: dict, settings: dict):
 
                     try:
                         ruta = await client.download_media(
-                            msg, file=str(fpath),
+                            msg,
+                            file=str(fpath),
                             progress_callback=progress_factory(inicio),
                         )
 
@@ -643,7 +694,8 @@ async def run(config: dict, settings: dict):
                         # Reintento único
                         try:
                             ruta = await client.download_media(
-                                msg, file=str(fpath),
+                                msg,
+                                file=str(fpath),
                                 progress_callback=progress_factory(inicio),
                             )
                             if ruta:
@@ -712,10 +764,12 @@ async def run(config: dict, settings: dict):
                 break
 
             # ── Auto-skip si no se descargó nada nuevo ──
-            if (settings.get("auto_skip_all_dupes")
+            if (
+                settings.get("auto_skip_all_dupes")
                 and batch_ok == 0
                 and batch_err == 0
-                and (batch_dup > 0 or batch_skip > 0)):
+                and (batch_dup > 0 or batch_skip > 0)
+            ):
                 print(f"     ({_warn('sin novedades')}, paso al siguiente automáticamente)")
                 continue
 
@@ -751,8 +805,8 @@ async def run(config: dict, settings: dict):
             chat_key = chat_folder or str(chat_id)
             cat = catalog.setdefault("chats", {}).get(chat_key, {})
             cat["newest_id"] = max(cat.get("newest_id", 0), session_max_id)
-            cat["oldest_id"] = min(cat.get("oldest_id", float('inf')), session_min_id)
-            if cat["oldest_id"] == float('inf'):
+            cat["oldest_id"] = min(cat.get("oldest_id", float("inf")), session_min_id)
+            if cat["oldest_id"] == float("inf"):
                 cat["oldest_id"] = session_min_id
             cat["last_date"] = datetime.now().strftime("%Y-%m-%d")
             cat["total_count"] = cat.get("total_count", 0) + total_ok + total_dup + total_skip
@@ -765,6 +819,7 @@ async def run(config: dict, settings: dict):
 # ===========================================================================
 # Entry point
 # ===========================================================================
+
 
 def main():
     _load_dotenv()  # Cargar .env automáticamente, sin dependencias externas

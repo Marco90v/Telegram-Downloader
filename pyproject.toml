@@ -1,0 +1,30 @@
+[project]
+name = "descarga"
+description = "Telegram mass media downloader"
+requires-python = ">=3.10"
+
+# ===========================================================================
+# Ruff — linter + formatter + import sorter (todo en uno)
+# ===========================================================================
+# Configuración compartida: aplica a lint, format, y cualquier subcomando.
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = ["venv", ".agents"]
+
+# ── Linting ────────────────────────────────────────────────────────────────
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle — errores de estilo (espacios, líneas en blanco, etc.)
+    "F",    # pyflakes — errores lógicos (variables sin usar, imports sin usar)
+    "I",    # isort — orden de imports consistente
+    "W",    # pycodestyle — warnings de estilo
+    "UP",   # pyupgrade — sugiere sintaxis moderna de Python (3.10+)
+]
+ignore = [
+    "E501", # línea muy larga → lo maneja el formatter, no el linter
+]
+
+# ── Formatter ──────────────────────────────────────────────────────────────
+[tool.ruff.format]
+quote-style = "double"

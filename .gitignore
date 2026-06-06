@@ -46,3 +46,9 @@ settings.json
 
 # --- Catálogo de descargas (contiene IDs de mensajes privados) ---
 catalog.json
+
+# --- Herramientas locales del desarrollador ---
+.agents/
+
+# --- Ruff (linter/formatter) ---
+.ruff_cache/
