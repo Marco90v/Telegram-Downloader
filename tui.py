@@ -97,6 +97,8 @@ def _save_settings(settings: dict) -> None:
 class LoginScreen(Screen):
     """Login a Telegram si no hay sesión guardada."""
 
+    TRANSITION = "slide 0.3s"
+
     BINDINGS = [
         Binding("q", "quit", "Salir"),
     ]
@@ -347,9 +349,13 @@ class LoginScreen(Screen):
 class MainScreen(Screen):
     """Pantalla principal con layout de 3 paneles: resumen, detalle, log."""
 
+    TRANSITION = "slide 0.3s"
+
     BINDINGS = [
+        Binding("s", "start_download", "Iniciar"),
         Binding("p", "toggle_pause", "Pausa"),
         Binding("c", "open_config", "Config"),
+        Binding("d", "toggle_dark", "Tema"),
         Binding("q", "quit", "Salir"),
     ]
 
@@ -478,6 +484,18 @@ class MainScreen(Screen):
         self._set_status("[yellow]Deteniendo...[/]")
         self._log(_warn("Deteniendo..."))
         self.set_timer(0.5, lambda: self.app.exit())
+
+    def action_start_download(self) -> None:
+        """Atajo de teclado: inicia descarga."""
+        if not self._downloading and not self._started:
+            self._start_download()
+
+    def action_toggle_dark(self) -> None:
+        """Atajo de teclado: alterna tema claro/oscuro."""
+        self.app.dark = not self.app.dark
+        theme = "🌙 Oscuro" if self.app.dark else "☀ Claro"
+        self._log(f"  {_head(theme)}")
+        self._set_status(theme)
 
     # ── Botones ──
 
@@ -797,6 +815,8 @@ class MainScreen(Screen):
 class ConfigScreen(Screen):
     """Configuración de la descarga: chat, fechas, settings."""
 
+    TRANSITION = "slide 0.3s"
+
     BINDINGS = [
         Binding("escape", "cancel", "Cancelar"),
         Binding("q", "cancel", "Salir"),
@@ -1023,6 +1043,10 @@ class TUIApp(App):
     TITLE = "Descargador Masivo de Telegram"
     SUB_TITLE = "TUI"
 
+    BINDINGS = [
+        Binding("ctrl+t", "toggle_dark", "Tema"),
+    ]
+
     CSS = """
     Screen {
         layout: vertical;
@@ -1136,6 +1160,10 @@ class TUIApp(App):
         """Verifica si existe un archivo de sesión de Telegram."""
         session_path = Path(f"{self.config['SESSION_NAME']}.session")
         return session_path.exists()
+
+    def action_toggle_dark(self) -> None:
+        """Alterna tema claro/oscuro (disponible en toda la app)."""
+        self.dark = not self.dark
 
     def on_mount(self) -> None:
         """Carga configuración y decide qué pantalla mostrar."""
