@@ -842,10 +842,12 @@ class ConfigScreen(Screen):
 
     #config-box {
         width: 60;
-        height: auto;
+        height: 1fr;
+        min-height: 10;
+        overflow-y: auto;
         border: round $primary;
         padding: 1 2;
-        margin: 1 2;
+        margin: 1 2 0 2;
     }
 
     #config-title {
@@ -857,11 +859,11 @@ class ConfigScreen(Screen):
         margin-bottom: 1;
     }
 
-    #date-row {
+    #date-row, #batch-row {
         height: auto;
     }
 
-    #date-row > Vertical {
+    #date-row > Vertical, #batch-row > Vertical {
         width: 1fr;
         margin-right: 1;
     }
@@ -890,7 +892,7 @@ class ConfigScreen(Screen):
     #config-controls {
         height: 3;
         align: center middle;
-        margin-top: 1;
+        margin: 1 1;
     }
 
     ConfigScreen Input {
@@ -905,6 +907,7 @@ class ConfigScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
 
+        # ── Formulario scrolleable ──
         with Vertical(id="config-box"):
             yield Static("[bold cyan]Configuración[/]", id="config-title")
             yield Static("", id="config-status")
@@ -920,8 +923,13 @@ class ConfigScreen(Screen):
                     yield Static("Fecha hasta (opcional):")
                     yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
 
-            yield Static("Archivos por lote:")
-            yield Input(id="cfg-batch", placeholder="100")
+            with Horizontal(id="batch-row"):
+                with Vertical():
+                    yield Static("Archivos por lote:")
+                    yield Input(id="cfg-batch", placeholder="100")
+                with Vertical():
+                    yield Static("Umbral archivo grande (MB):")
+                    yield Input(id="cfg-large-threshold", placeholder="50")
 
             yield Static("[bold]Comportamiento[/]", id="settings-section")
 
@@ -932,9 +940,6 @@ class ConfigScreen(Screen):
                 prompt="Seleccionar acción",
             )
 
-            yield Static("Umbral archivo grande (MB):")
-            yield Input(id="cfg-large-threshold", placeholder="50")
-
             with Horizontal(id="switch-row"):
                 yield Static("Auto-omitir duplicados:")
                 yield Switch(id="cfg-skip-dupes")
@@ -942,9 +947,10 @@ class ConfigScreen(Screen):
                 yield Static("Auto-continuar:")
                 yield Switch(id="cfg-auto-continue")
 
-            with Horizontal(id="config-controls"):
-                yield Button("Guardar", id="btn-save", variant="primary")
-                yield Button("Cancelar", id="btn-cancel", variant="error")
+        # ── Botones siempre visibles fuera del scroll ──
+        with Horizontal(id="config-controls"):
+            yield Button("Guardar", id="btn-save", variant="primary")
+            yield Button("Cancelar", id="btn-cancel", variant="error")
 
         yield Footer()
 
