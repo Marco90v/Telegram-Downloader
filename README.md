@@ -5,8 +5,16 @@ Descarga masiva de fotos y videos de grupos/canales de Telegram.
 ## Requisitos
 
 - Python 3.10+
-- `pip install -r requirements.txt`
 - API ID + API Hash de [my.telegram.org](https://my.telegram.org/apps)
+
+## Instalación
+
+```bash
+git clone <repo-url>
+cd descarga
+python -m venv venv
+venv/bin/pip install -r requirements.txt
+```
 
 ## Configuración
 
@@ -55,6 +63,13 @@ Se crea automáticamente al ejecutar. Editálo con cualquier editor de texto.
 ## Uso
 
 ```bash
+./run.sh
+```
+
+O si preferís activar el venv manualmente:
+
+```bash
+source venv/bin/activate
 python descarga.py
 ```
 

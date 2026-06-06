@@ -49,6 +49,7 @@ catalog.json
 
 # --- Herramientas locales del desarrollador ---
 .agents/
+skills-lock.json
 
 # --- Ruff (linter/formatter) ---
 .ruff_cache/
