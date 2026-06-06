@@ -43,3 +43,6 @@ downloads/
 
 # --- Configuración personal del usuario ---
 settings.json
+
+# --- Catálogo de descargas (contiene IDs de mensajes privados) ---
+catalog.json
