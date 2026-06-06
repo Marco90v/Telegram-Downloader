@@ -842,9 +842,10 @@ class ConfigScreen(Screen):
 
     #config-box {
         width: 100%;
-        height: auto;
+        height: 1fr;
+        overflow-y: auto;
         border: round $primary;
-        padding: 0;
+        padding: 0 1;
         margin: 0;
     }
 
