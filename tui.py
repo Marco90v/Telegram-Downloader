@@ -860,6 +860,18 @@ class ConfigScreen(Screen):
         margin: 0;
     }
 
+    #date-row {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    #date-row > Vertical {
+        width: 1fr;
+        padding: 0;
+        margin: 0;
+    }
+
     #settings-section {
         padding: 0;
         margin: 0;
@@ -889,10 +901,13 @@ class ConfigScreen(Screen):
             yield Static("Chat (ID numérico o @username):")
             yield Input(id="cfg-chat", placeholder="-1001234567890 o @chat")
 
-            yield Static("Fecha desde (opcional):")
-            yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
-            yield Static("Fecha hasta (opcional):")
-            yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
+            with Horizontal(id="date-row"):
+                with Vertical():
+                    yield Static("Fecha desde (opcional):")
+                    yield Input(id="cfg-since", placeholder="2025-01-01 o vacío")
+                with Vertical():
+                    yield Static("Fecha hasta (opcional):")
+                    yield Input(id="cfg-until", placeholder="2025-12-31 o vacío")
 
             yield Static("Archivos por lote:")
             yield Input(id="cfg-batch", placeholder="100")
