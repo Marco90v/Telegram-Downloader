@@ -1168,8 +1168,7 @@ class CatalogScreen(Screen):
             info = chats[name]
             safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
             self._chat_map[safe] = name
-            entry = Vertical(classes="catalog-entry")
-            entry.mount(
+            entry = Vertical(
                 Static(name, classes="catalog-name"),
                 Static(
                     f"  Procesados: {info.get('total_count', '?')}  "
@@ -1181,6 +1180,7 @@ class CatalogScreen(Screen):
                     Button("🗑  Borrar", id=f"del-{safe}"),
                     classes="catalog-confirm",
                 ),
+                classes="catalog-entry",
             )
             box.mount(entry)
 
