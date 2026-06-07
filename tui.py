@@ -1376,19 +1376,19 @@ class CatalogScreen(Screen):
 
             confirm = ConfirmDelete(name, delete_files)
             self.app.push_screen(
-                confirm, lambda ok: self._on_delete_confirm(ok, safe, delete_files)
+                confirm, lambda ok, n=name, df=delete_files: self._on_delete_confirm(ok, n, df)
             )
 
-    def _on_delete_confirm(self, ok: bool, safe: str, delete_files: bool) -> None:
+    def _on_delete_confirm(self, ok: bool, name: str, delete_files: bool) -> None:
         if not ok:
             return
 
-        name = self._chat_map.get(safe, safe)
         output_dir = Path(self.app.config["OUTPUT_DIR"])
         remove_catalog_entry(name, output_dir, delete_files)
 
-        # Reemplazar con una instancia fresca (recarga la lista)
-        self.app.pop_screen()
+        # Sacar el diálogo + el CatalogScreen viejo, reemplazar con uno fresco
+        self.app.pop_screen()  # cierra el diálogo ConfirmDelete
+        self.app.pop_screen()  # cierra este CatalogScreen viejo
         self.app.push_screen(CatalogScreen())
 
 
