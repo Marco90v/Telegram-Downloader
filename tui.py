@@ -1143,9 +1143,9 @@ class CatalogScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._render()
+        self._build_catalog()
 
-    def _render(self, msg: str | None = None) -> None:
+    def _build_catalog(self, msg: str | None = None) -> None:
         """(Re)construye la lista de entradas."""
         box = self.query_one("#catalog-box", Vertical)
         # Limpiar todo excepto el título
@@ -1196,7 +1196,7 @@ class CatalogScreen(Screen):
             safe = bid[8:]
             self._do_delete(safe)
         elif bid.startswith("cancel-"):
-            self._render()
+            self._build_catalog()
 
     def _show_confirm(self, safe: str, btn: Button) -> None:
         """Reemplaza el botón Borrar por confirmación."""
@@ -1227,7 +1227,7 @@ class CatalogScreen(Screen):
                 msg = f"[green]✓ '{name}' eliminado (carpeta borrada).[/]"
         else:
             msg = f"[red]✗ No se encontró '{name}'.[/]"
-        self._render(msg)
+        self._build_catalog(msg)
 
 
 # ── App ──
