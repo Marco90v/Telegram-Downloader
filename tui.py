@@ -1188,7 +1188,7 @@ class CatalogScreen(Screen):
         bid = event.button.id or ""
 
         if bid == "btn-back":
-            self.action_back()
+            self.app.pop_screen()
         elif bid.startswith("del-"):
             safe = bid[4:]
             self._show_confirm(safe, event.button)
