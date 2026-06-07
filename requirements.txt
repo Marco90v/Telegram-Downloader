@@ -3,6 +3,9 @@
 
 telethon>=1.30
 
+# TUI (Interfaz de terminal) — opcional, solo para python tui.py
+textual>=8.0
+
 # Desarrollo — linter + formatter
 ruff>=0.5
 

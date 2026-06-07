@@ -2,6 +2,16 @@
 
 Descarga masiva de fotos y videos de grupos/canales de Telegram.
 
+Dos interfaces: **CLI** (ANSI, liviana) y **TUI** (Textual, interactiva).
+
+## Quick start
+
+```bash
+cp .env.example .env         # completá con tus datos de my.telegram.org
+./run.sh                     # arranca en modo CLI
+./run.sh --tui               # o en modo TUI (si instalaste textual)
+```
+
 ## Requisitos
 
 - Python 3.10+
@@ -15,6 +25,11 @@ cd descarga
 python -m venv venv
 venv/bin/pip install -r requirements.txt
 ```
+
+> La TUI (Textual) requiere `textual>=8.0`. Si solo usás la CLI, podés instalar solo `telethon`:
+> ```bash
+> venv/bin/pip install telethon
+> ```
 
 ## Configuración
 
@@ -60,39 +75,134 @@ Se crea automáticamente al ejecutar. Editálo con cualquier editor de texto.
 | `auto_skip_all_dupes: true` + `"skip"` | Saltea la pregunta por lote si nada nuevo se descargó. Pregunta solo cuando algo se bajó |
 | `auto_continue: true` + `"skip"` | **Modo fuego y olvido**: configura una vez, ejecutá y dejala correr |
 
-## Uso
+---
+
+## Interfaces
+
+### CLI (descarga.py)
 
 ```bash
-./run.sh
-```
-
-O si preferís activar el venv manualmente:
-
-```bash
-source venv/bin/activate
+./run.sh                  # CLI (default)
+# o directamente:
 python descarga.py
 ```
 
-1. Opcional: filtrar por rango de fechas
-2. Si es la primera vez o elegís empezar de nuevo, confirma que querés comenzar
-3. **Reanudar sesiones anteriores**: el script detecta si ya descargaste contenido de este chat y te pregunta:
-   - **Solo contenido nuevo**: descarga solo los mensajes posteriores al último visto
-   - **Continuar completo**: además del contenido nuevo, sigue descargando hacia atrás saltando lo ya procesado
-   - **Empezar de nuevo**: ignora el historial y descarga todo otra vez
-4. El script descarga en lotes, preguntando si querés continuar después de cada uno (excepto si `auto_continue: true`)
-5. Ctrl+C interrumpe limpia y ordenadamente
+Flujo:
 
-Al finalizar, el catálogo (`catalog.json`) se actualiza automáticamente para la próxima reanudación.
+1. **Filtro por fechas** (opcional): podés limitar la descarga a un rango de fechas
+2. **Confirmación**: confirma que querés arrancar
+3. **Reanudación**: si ya hay sesión anterior, elegí:
+   - **Solo contenido nuevo** — descarga solo lo que no se bajó antes
+   - **Continuar hacia atrás** — salta lo ya descargado pero sigue procesando más atrás
+   - **Empezar de nuevo** — ignora el historial
+4. **Descarga por lotes**: después de cada lote pregunta si seguir (excepto con `auto_continue: true`)
+5. **Archivos grandes**: con `large_file_action: "ask"` pregunta por cada archivo que supere el umbral
 
-Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, con subcarpeta si el chat tiene un canal vinculado.
+#### Comandos de catálogo (CLI)
+
+```bash
+./run.sh --catalog list                          # listar
+./run.sh --catalog remove "Nombre del chat"      # eliminar entrada
+./run.sh --catalog remove "Nombre" --delete-files # eliminar + archivos
+```
+
+#### Atajos de teclado (CLI)
+
+| Tecla | Acción |
+|-------|--------|
+| `s` / `y` | Sí / Seguir |
+| `n` / `q` | No / Detener |
+| `Ctrl+C` | Interrumpir descarga (cierra sesión limpiamente) |
+
+---
+
+### TUI (Textual)
+
+```bash
+./run.sh --tui
+# o directamente:
+python -m tui
+```
+
+> **Requiere:** `pip install textual>=8.0` (incluido en `requirements.txt`)
+
+Interfaz gráfica en terminal con 3 paneles, teclas rápidas y diálogos modales.
+
+#### Pantallas
+
+| Pantalla | Descripción |
+|----------|-------------|
+| **Login** | Ingreso de teléfono, código de verificación y contraseña 2FA (si aplica) |
+| **Principal** | 3 paneles: resumen (stats), detalle (archivo actual + barra de progreso), log (historial coloreado) |
+| **Config** | Chat, fechas, tamaño de lote, umbral de archivos grandes, acción, auto-continuar, auto-omitir duplicados |
+| **Catálogo** | Lista de chats con sesión guardada — permite borrar entradas (con o sin archivos) |
+| **Reanudación** | Modal al iniciar si hay sesión anterior: "Solo nuevo" o "Verificar todo" |
+| **Continuar** | Modal entre lotes: "Detener" o "Continuar" |
+
+#### Panel izquierdo (stats en vivo)
+
+- Chat activo
+- Archivos descargados
+- Tamaño total
+- Errores
+- Procesados en este lote
+- Velocidad de descarga
+- Tiempo transcurrido
+
+#### Panel derecho (detalle + progreso)
+
+- Nombre del archivo actual con tamaño total
+- Barra de progreso con porcentaje
+- Lote actual
+
+#### Botones
+
+| Botón | Acción |
+|-------|--------|
+| ▶ Iniciar | Comienza la descarga (o reintenta tras un error) |
+| ⏸ Pausar / ▶ Reanudar | Pausa/reanuda — guarda checkpoint del catálogo al pausar |
+| ⚙ Config | Abre pantalla de configuración |
+| 📋 Catálogo | Abre el catálogo de sesiones guardadas |
+| ✕ Salir | Guarda checkpoint y cierra la app |
+
+#### Atajos de teclado (TUI)
+
+| Tecla | Acción |
+|-------|--------|
+| `s` | Iniciar descarga |
+| `p` | Pausar / Reanudar |
+| `c` | Abrir configuración |
+| `d` | Alternar tema claro/oscuro |
+| `q` | Salir (guarda checkpoint) |
+| `Ctrl+T` | Alternar tema (global) |
+| `Escape` | Volver (en pantallas secundarias) |
+
+#### Checkpoints
+
+La TUI guarda el catálogo automáticamente en estos momentos:
+
+- Al **pausar** la descarga
+- Al **salir** de la app
+- Entre **lotes** (antes del diálogo de continuar)
+- Al **finalizar** la descarga
+
+Esto evita pérdida de progreso si cerrás la app accidentalmente.
+
+---
 
 ## Salida en terminal
 
-- `📷` = foto, `🎬` = video
-- Barra de progreso con porcentaje y MB descargados / total
-- `✓` = descargado (verde), `⏭` = ya existía u omitido (amarillo), `✗` = error (rojo)
-- Encabezados e información clave en cian
-- Sin dependencias — usa ANSI escape codes puros
+| Símbolo | Significado | Color |
+|---------|-------------|-------|
+| `📷` | Foto | — |
+| `🎬` | Video | — |
+| `✓` | Descargado correctamente | Verde |
+| `⏭` | Ya existía / Omitido | Amarillo |
+| `✗` | Error | Rojo |
+
+La CLI usa ANSI escape codes puros. La TUI usa Textual markup con colores integrados.
+
+---
 
 ## Catálogo de reanudación
 
@@ -103,14 +213,37 @@ Los archivos se guardan como `YYYYMMDD_MessageID.ext` en una carpeta por chat, c
 
 No requiere mantenimiento manual. Si borrás los archivos del disco y querés descargar solo lo nuevo, el catálogo evita que se descargue todo de nuevo.
 
+---
+
 ## Desarrollo
 
 ```bash
 pip install -r requirements.txt      # instala dependencias + herramientas dev
 pre-commit install                    # activa hooks de Ruff al hacer commit
-ruff check descarga.py                # lint
-ruff check descarga.py --fix          # lint + auto-fix
-ruff format descarga.py               # formatear código
+ruff check descarga.py core/ tui/ format/           # lint
+ruff check descarga.py core/ tui/ format/ --fix     # lint + auto-fix
+ruff format descarga.py core/ tui/ format/          # formatear código
 ```
 
 El proyecto usa [Ruff](https://astral.sh/ruff) como linter y formatter, con pre-commit hooks que verifican automáticamente antes de cada commit. Configuración en `pyproject.toml`.
+
+### Arquitectura
+
+```
+descarga.py      → Interfaz CLI: prompts, colores ANSI (vía format/)
+core/            → Motor compartido: conexión, descarga, catálogo, contadores
+  config.py        Carga de .env / settings.json
+  catalog.py       Catálogo persistente (catalog.json)
+  media.py         Utilidades de medios (tamaño, extensión, rutas)
+  telegram.py      Resolución de chats, conteo de medios
+  download.py      Descarga individual con reintento FloodWait
+  engine.py        Orquestación de descarga batch
+tui/             → Interfaz TUI: pantallas, diálogos modales
+  app.py           TUIApp (punto de entrada)
+  screens/         Login, Principal, Config, Catálogo, Diálogos
+format/          → Formateo compartido
+  ansi.py          Colores ANSI para CLI
+  textual.py       Markup Textual para TUI
+```
+
+**CLI** y **TUI** comparten el mismo motor (`core/`) y formato (`format/`). Los comandos de catálogo (`--catalog list/remove`) funcionan desde CLI.
