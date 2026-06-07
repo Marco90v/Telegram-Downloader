@@ -1133,6 +1133,7 @@ class CatalogScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self._chat_map: dict[str, str] = {}  # id_safe -> nombre_original
+        self._confirming: set[str] = set()  # safes en modo confirmación
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1168,6 +1169,22 @@ class CatalogScreen(Screen):
             info = chats[name]
             safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
             self._chat_map[safe] = name
+
+            if safe in self._confirming:
+                actions = Horizontal(
+                    Static("¿Borrar", classes="catalog-name"),
+                    Switch(id=f"files-{safe}", value=False),
+                    Static("también carpeta?", classes="catalog-info"),
+                    Button("✓ Sí", id=f"confirm-{safe}", variant="error"),
+                    Button("✗ No", id=f"cancel-{safe}", variant="default"),
+                    classes="catalog-confirm",
+                )
+            else:
+                actions = Horizontal(
+                    Button("🗑  Borrar", id=f"del-{safe}"),
+                    classes="catalog-confirm",
+                )
+
             entry = Vertical(
                 Static(name, classes="catalog-name"),
                 Static(
@@ -1176,10 +1193,7 @@ class CatalogScreen(Screen):
                     f"Última descarga: {info.get('last_date', '?')}",
                     classes="catalog-info",
                 ),
-                Horizontal(
-                    Button("🗑  Borrar", id=f"del-{safe}"),
-                    classes="catalog-confirm",
-                ),
+                actions,
                 classes="catalog-entry",
             )
             box.mount(entry)
@@ -1191,25 +1205,16 @@ class CatalogScreen(Screen):
             self.app.pop_screen()
         elif bid.startswith("del-"):
             safe = bid[4:]
-            self._show_confirm(safe, event.button)
+            self._confirming.add(safe)
+            self._build_catalog()
         elif bid.startswith("confirm-"):
             safe = bid[8:]
+            self._confirming.discard(safe)
             self._do_delete(safe)
         elif bid.startswith("cancel-"):
+            safe = bid[8:]
+            self._confirming.discard(safe)
             self._build_catalog()
-
-    def _show_confirm(self, safe: str, btn: Button) -> None:
-        """Reemplaza el botón Borrar por confirmación."""
-        parent = btn.parent  # Horizontal.catalog-confirm
-        for child in list(parent.children):
-            child.remove()
-        parent.mount(
-            Static("¿Borrar", classes="catalog-name"),
-            Switch(id=f"files-{safe}", value=False),
-            Static("también carpeta?", classes="catalog-info"),
-            Button("✓ Sí", id=f"confirm-{safe}", variant="error"),
-            Button("✗ No", id=f"cancel-{safe}", variant="default"),
-        )
 
     def _do_delete(self, safe: str) -> None:
         """Ejecuta la eliminación."""
