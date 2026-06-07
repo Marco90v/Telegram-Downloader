@@ -52,34 +52,32 @@ from core import (
     remove_catalog_entry,
 )
 
-# ── Helpers ANSI para el log ──
-
-
-class _c:
-    RST = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    RED = "\033[31m"
-    CYAN = "\033[36m"
-    MAG = "\033[35m"
+# ── Helpers para el log (Textual markup) ──
 
 
 def _ok(t: str) -> str:
-    return f"{_c.GREEN}{t}{_c.RST}"
+    """Verde — éxito."""
+    return f"[green]{t}[/]"
 
 
 def _warn(t: str) -> str:
-    return f"{_c.YELLOW}{t}{_c.RST}"
+    """Amarillo — advertencia."""
+    return f"[yellow]{t}[/]"
 
 
 def _fail(t: str) -> str:
-    return f"{_c.RED}{t}{_c.RST}"
+    """Rojo — error."""
+    return f"[red]{t}[/]"
 
 
 def _head(t: str) -> str:
-    return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
+    """Cian + bold — encabezado."""
+    return f"[bold cyan]{t}[/]"
+
+
+def _esc(t: str | int) -> str:
+    """Escapa '[' como '\\\\[' para evitar que RichLog lo interprete como markup."""
+    return str(t).replace("[", "\\[")
 
 
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
@@ -380,6 +378,7 @@ class MainScreen(Screen):
         self._continue_response: bool = False
         self._resume_event: threading.Event | None = None
         self._resume_choice: str = "resume"
+        self._engine: DownloadEngine | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -404,7 +403,7 @@ class MainScreen(Screen):
                 yield Static("Chat:  —", id="detail-chat")
 
         # ── Log ──
-        yield RichLog(id="log", highlight=True, wrap=True, max_lines=10000)
+        yield RichLog(id="log", highlight=True, wrap=True, max_lines=10000, markup=True)
 
         # ── Controles ──
         with Horizontal(id="controls"):
@@ -446,6 +445,10 @@ class MainScreen(Screen):
     def _update_progress_bar(self, current: int, total: int) -> None:
         """Actualiza la barra de progreso del archivo actual."""
         try:
+            if self._current_file and total > 0:
+                self._update_stat(
+                    "detail-file", f"Archivo:  {_esc(self._current_file)}  ({format_size(total)})"
+                )
             pb = self.query_one("#detail-progress", ProgressBar)
             if total > 0:
                 pb.update(progress=current, total=total)
@@ -471,6 +474,7 @@ class MainScreen(Screen):
             self._pause_event.clear()
             self._set_status("[yellow]⏸ PAUSADO[/]")
             self._log(_warn("⏸ PAUSADO"))
+            self._save_checkpoint()
             self.query_one("#btn-pause", Button).label = "▶  Reanudar"
         else:
             self._pause_event.set()
@@ -493,6 +497,7 @@ class MainScreen(Screen):
         """Detiene todo y cierra la app."""
         self.stop_requested = True
         self._pause_event.set()  # desbloquear worker si está pausado
+        self._save_checkpoint()
         self._set_status("[yellow]Deteniendo...[/]")
         self._log(_warn("Deteniendo..."))
         self.set_timer(0.5, lambda: self.app.exit())
@@ -568,6 +573,7 @@ class MainScreen(Screen):
     async def _async_download(self) -> None:
         """Async: conecta, prepara, descarga por lotes."""
         engine = DownloadEngine(self.app.config, self.app.settings)
+        self._engine = engine
         self._start_time = time.time()
 
         try:
@@ -690,7 +696,7 @@ class MainScreen(Screen):
                     fpath = media_path(msg, output_dir)
                     icono = "📷" if msg.photo else "🎬"
                     seq = engine.total_ok + engine.total_dup + engine.total_skip + 1
-                    line_prefix = f"  {icono} [{seq}] {fpath.name}"
+                    line_prefix = f"  {icono} [{_esc(seq)}] {_esc(fpath.name)}"
 
                     self._current_file = fpath.name
                     self.app.call_from_thread(self._reset_progress_bar)
@@ -860,8 +866,23 @@ class MainScreen(Screen):
         except Exception:
             pass
 
+    def _save_checkpoint(self) -> None:
+        """Guarda checkpoint del catálogo actual con finalize(), si hay engine."""
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        try:
+            engine.finalize()
+            # después de finalize() reseteamos contadores para no duplicar
+            engine.total_ok = 0
+            engine.total_skip = 0
+            self._log(_ok("✓ Checkpoint guardado"))
+        except Exception as e:
+            self._log(_fail(f"✗ Error guardando checkpoint: {e}"))
+
     def _show_continue_dialog(self, ok_count: int) -> None:
         """Muestra el diálogo de continuar (llamado desde el worker thread vía call_from_thread)."""
+        self._save_checkpoint()
         dialog = ContinueDialog(self._batch_num, ok_count)
 
         def _on_response(confirmed: bool) -> None:
