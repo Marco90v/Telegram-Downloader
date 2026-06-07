@@ -13,7 +13,6 @@ Uso:
 
 import asyncio
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -30,44 +29,11 @@ from core import (
     media_size,
     remove_catalog_entry,
 )
-
-# ===========================================================================
-# Colores ANSI
-# ===========================================================================
-
-
-class _c:
-    RST = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-    GREEN = "\033[32m"
-    YEL = "\033[33m"
-    RED = "\033[31m"
-    CYAN = "\033[36m"
-    MAG = "\033[35m"
-
-
-def _ok(t: str) -> str:
-    return f"{_c.GREEN}{t}{_c.RST}"
-
-
-def _warn(t: str) -> str:
-    return f"{_c.YEL}{t}{_c.RST}"
-
-
-def _err(t: str) -> str:
-    return f"{_c.RED}{t}{_c.RST}"
-
-
-def _head(t: str) -> str:
-    return f"{_c.CYAN}{_c.BOLD}{t}{_c.RST}"
-
-
-def _clear_line() -> str:
-    """Prefijo que borra toda la línea actual de la terminal."""
-    cols = shutil.get_terminal_size().columns
-    return f"\r{' ' * cols}\r"
-
+from format.ansi import clear_line as _clear_line
+from format.ansi import err as _err
+from format.ansi import head as _head
+from format.ansi import ok as _ok
+from format.ansi import warn as _warn
 
 # ===========================================================================
 # Prompts CLI
