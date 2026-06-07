@@ -13,6 +13,7 @@ Requiere: pip install textual>=8.0
 import asyncio
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -1129,6 +1130,10 @@ class CatalogScreen(Screen):
     }
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._chat_map: dict[str, str] = {}  # id_safe -> nombre_original
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="catalog-box"):
@@ -1158,8 +1163,11 @@ class CatalogScreen(Screen):
             box.mount(Static("[yellow]No hay chats en el catálogo.[/]"))
             return
 
+        self._chat_map.clear()
         for name in sorted(chats.keys()):
             info = chats[name]
+            safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+            self._chat_map[safe] = name
             entry = Vertical(classes="catalog-entry")
             entry.mount(
                 Static(name, classes="catalog-name"),
@@ -1170,7 +1178,7 @@ class CatalogScreen(Screen):
                     classes="catalog-info",
                 ),
                 Horizontal(
-                    Button("🗑  Borrar", id=f"del-{name}"),
+                    Button("🗑  Borrar", id=f"del-{safe}"),
                     classes="catalog-confirm",
                 ),
             )
@@ -1182,43 +1190,43 @@ class CatalogScreen(Screen):
         if bid == "btn-back":
             self.action_back()
         elif bid.startswith("del-"):
-            chat_key = bid[4:]
-            self._show_confirm(chat_key, event.button)
+            safe = bid[4:]
+            self._show_confirm(safe, event.button)
         elif bid.startswith("confirm-"):
-            chat_key = bid[8:]
-            self._do_delete(chat_key)
+            safe = bid[8:]
+            self._do_delete(safe)
         elif bid.startswith("cancel-"):
-            chat_key = bid[7:]
             self._render()
 
-    def _show_confirm(self, chat_key: str, btn: Button) -> None:
+    def _show_confirm(self, safe: str, btn: Button) -> None:
         """Reemplaza el botón Borrar por confirmación."""
         parent = btn.parent  # Horizontal.catalog-confirm
         parent.remove_all()
         parent.mount(
             Static("¿Borrar", classes="catalog-name"),
-            Switch(id=f"files-{chat_key}", value=False),
+            Switch(id=f"files-{safe}", value=False),
             Static("también carpeta?", classes="catalog-info"),
-            Button("✓ Sí", id=f"confirm-{chat_key}", variant="error"),
-            Button("✗ No", id=f"cancel-{chat_key}", variant="default"),
+            Button("✓ Sí", id=f"confirm-{safe}", variant="error"),
+            Button("✗ No", id=f"cancel-{safe}", variant="default"),
         )
 
-    def _do_delete(self, chat_key: str) -> None:
+    def _do_delete(self, safe: str) -> None:
         """Ejecuta la eliminación."""
+        name = self._chat_map.get(safe, safe)
         try:
-            switch = self.query_one(f"#files-{chat_key}", Switch)
+            switch = self.query_one(f"#files-{safe}", Switch)
             delete_files = switch.value
         except Exception:
             delete_files = False
 
         output_dir = Path(self.app.config["OUTPUT_DIR"])
-        ok = remove_catalog_entry(chat_key, output_dir, delete_files)
+        ok = remove_catalog_entry(name, output_dir, delete_files)
         if ok:
-            msg = f"[green]✓ '{chat_key}' eliminado del catálogo.[/]"
+            msg = f"[green]✓ '{name}' eliminado del catálogo.[/]"
             if delete_files:
-                msg = f"[green]✓ '{chat_key}' eliminado (carpeta borrada).[/]"
+                msg = f"[green]✓ '{name}' eliminado (carpeta borrada).[/]"
         else:
-            msg = f"[red]✗ No se encontró '{chat_key}'.[/]"
+            msg = f"[red]✗ No se encontró '{name}'.[/]"
         self._render(msg)
 
 
