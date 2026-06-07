@@ -1148,24 +1148,25 @@ class CatalogScreen(Screen):
 
     def _build_catalog(self, msg: str | None = None) -> None:
         """(Re)construye la lista de entradas."""
-        self.set_timer(0, lambda: self._rebuild_entries(msg))
+        coro = self._rebuild_entries(msg)
+        self.set_timer(0, coro)
 
-    def _rebuild_entries(self, msg: str | None = None) -> None:
+    async def _rebuild_entries(self, msg: str | None = None) -> None:
         """Llamado desde set_timer para que las operaciones DOM funcionen."""
         box = self.query_one("#catalog-box", Vertical)
         # Limpiar todo excepto el título
         for child in list(box.children):
             if child.id != "catalog-title":
-                child.remove()
+                await child.remove()
 
         catalog = list_catalog()
         chats = catalog.get("chats", {})
 
         if msg:
-            box.mount(Static(msg, id="catalog-status"))
+            await box.mount(Static(msg, id="catalog-status"))
 
         if not chats:
-            box.mount(Static("[yellow]No hay chats en el catálogo.[/]"))
+            await box.mount(Static("[yellow]No hay chats en el catálogo.[/]"))
             return
 
         self._chat_map.clear()
@@ -1200,7 +1201,7 @@ class CatalogScreen(Screen):
                 actions,
                 classes="catalog-entry",
             )
-            box.mount(entry)
+            await box.mount(entry)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
