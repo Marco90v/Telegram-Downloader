@@ -42,11 +42,13 @@ from core import (
     download_one,
     fmt_count,
     format_size,
+    list_catalog,
     load_config,
     load_dotenv,
     load_settings,
     media_path,
     media_size,
+    remove_catalog_entry,
 )
 
 # ── Helpers ANSI para el log ──
@@ -404,6 +406,7 @@ class MainScreen(Screen):
             yield Button("▶  Iniciar", id="btn-start", variant="primary")
             yield Button("⏸  Pausar", id="btn-pause", disabled=True)
             yield Button("⚙  Config", id="btn-config", variant="default")
+            yield Button("📋  Catálogo", id="btn-catalog", variant="default")
             yield Button("✕  Salir", id="btn-quit", variant="error")
 
         yield Footer()
@@ -477,6 +480,10 @@ class MainScreen(Screen):
             return
         self.app.push_screen(ConfigScreen())
 
+    def action_open_catalog(self) -> None:
+        """Abrir pantalla de gestión del catálogo."""
+        self.app.push_screen(CatalogScreen())
+
     def action_quit(self) -> None:
         """Detiene todo y cierra la app."""
         self.stop_requested = True
@@ -506,6 +513,8 @@ class MainScreen(Screen):
             self.action_toggle_pause()
         elif event.button.id == "btn-config":
             self.action_open_config()
+        elif event.button.id == "btn-catalog":
+            self.action_open_catalog()
         elif event.button.id == "btn-quit":
             self.action_quit()
 
@@ -1047,6 +1056,170 @@ class ConfigScreen(Screen):
             status.update(f"[bold red]Error: formato inválido — {e}[/]")
         except Exception as e:
             status.update(f"[bold red]Error inesperado: {e}[/]")
+
+
+# ── Pantalla de gestión del catálogo ──
+
+
+class CatalogScreen(Screen):
+    """Lista los chats del catálogo y permite borrarlos."""
+
+    TRANSITION = "slide 0.3s"
+
+    BINDINGS = [
+        Binding("escape", "back", "Volver"),
+        Binding("q", "back", "Salir"),
+    ]
+
+    CSS = """
+    CatalogScreen {
+        align: center top;
+    }
+
+    #catalog-box {
+        width: 100%;
+        max-width: 80;
+        height: 1fr;
+        overflow-y: auto;
+        border: round $primary;
+        padding: 0 1;
+        margin: 0;
+    }
+
+    #catalog-title {
+        text-style: bold;
+        padding: 0;
+        margin: 0 0 1 0;
+    }
+
+    .catalog-entry {
+        height: auto;
+        padding: 0;
+        margin: 0 0 1 0;
+        border: solid $primary 30%;
+    }
+
+    .catalog-name {
+        text-style: bold;
+        padding: 0;
+        margin: 0;
+    }
+
+    .catalog-info {
+        padding: 0;
+        margin: 0;
+    }
+
+    .catalog-confirm {
+        height: auto;
+        padding: 0;
+        margin: 0;
+    }
+
+    #catalog-controls {
+        height: 3;
+        align: center middle;
+        padding: 0;
+        margin: 0;
+    }
+
+    CatalogScreen Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="catalog-box"):
+            yield Static("[bold cyan]Catálogo de descargas[/]", id="catalog-title")
+        with Horizontal(id="catalog-controls"):
+            yield Button("Volver", id="btn-back", variant="primary")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._render()
+
+    def _render(self, msg: str | None = None) -> None:
+        """(Re)construye la lista de entradas."""
+        box = self.query_one("#catalog-box", Vertical)
+        # Limpiar todo excepto el título
+        for child in list(box.children):
+            if child.id != "catalog-title":
+                child.remove()
+
+        catalog = list_catalog()
+        chats = catalog.get("chats", {})
+
+        if msg:
+            box.mount(Static(msg, id="catalog-status"))
+
+        if not chats:
+            box.mount(Static("[yellow]No hay chats en el catálogo.[/]"))
+            return
+
+        for name in sorted(chats.keys()):
+            info = chats[name]
+            entry = Vertical(classes="catalog-entry")
+            entry.mount(
+                Static(name, classes="catalog-name"),
+                Static(
+                    f"  Procesados: {info.get('total_count', '?')}  "
+                    f"({info.get('oldest_id', '?')}→{info.get('newest_id', '?')})  "
+                    f"Última descarga: {info.get('last_date', '?')}",
+                    classes="catalog-info",
+                ),
+                Horizontal(
+                    Button("🗑  Borrar", id=f"del-{name}"),
+                    classes="catalog-confirm",
+                ),
+            )
+            box.mount(entry)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id or ""
+
+        if bid == "btn-back":
+            self.action_back()
+        elif bid.startswith("del-"):
+            chat_key = bid[4:]
+            self._show_confirm(chat_key, event.button)
+        elif bid.startswith("confirm-"):
+            chat_key = bid[8:]
+            self._do_delete(chat_key)
+        elif bid.startswith("cancel-"):
+            chat_key = bid[7:]
+            self._render()
+
+    def _show_confirm(self, chat_key: str, btn: Button) -> None:
+        """Reemplaza el botón Borrar por confirmación."""
+        parent = btn.parent  # Horizontal.catalog-confirm
+        parent.remove_all()
+        parent.mount(
+            Static("¿Borrar", classes="catalog-name"),
+            Switch(id=f"files-{chat_key}", value=False),
+            Static("también carpeta?", classes="catalog-info"),
+            Button("✓ Sí", id=f"confirm-{chat_key}", variant="error"),
+            Button("✗ No", id=f"cancel-{chat_key}", variant="default"),
+        )
+
+    def _do_delete(self, chat_key: str) -> None:
+        """Ejecuta la eliminación."""
+        try:
+            switch = self.query_one(f"#files-{chat_key}", Switch)
+            delete_files = switch.value
+        except Exception:
+            delete_files = False
+
+        output_dir = Path(self.app.config["OUTPUT_DIR"])
+        ok = remove_catalog_entry(chat_key, output_dir, delete_files)
+        if ok:
+            msg = f"[green]✓ '{chat_key}' eliminado del catálogo.[/]"
+            if delete_files:
+                msg = f"[green]✓ '{chat_key}' eliminado (carpeta borrada).[/]"
+        else:
+            msg = f"[red]✗ No se encontró '{chat_key}'.[/]"
+        self._render(msg)
 
 
 # ── App ──

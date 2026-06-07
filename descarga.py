@@ -513,6 +513,8 @@ def _cmd_catalog_remove(chat_key: str, delete_files: bool = False):
 def main():
     import sys as _sys
 
+    load_dotenv()
+
     # ── Comandos de catálogo ──
     if len(_sys.argv) >= 2 and _sys.argv[1] == "--catalog":
         if len(_sys.argv) >= 3 and _sys.argv[2] == "list":
@@ -528,8 +530,6 @@ def main():
         print("    python descarga.py --catalog remove <chat> [--delete-files]")
         print()
         return
-
-    load_dotenv()
     try:
         config = load_config()
     except ValueError as e:
