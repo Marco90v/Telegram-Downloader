@@ -1386,9 +1386,9 @@ class CatalogScreen(Screen):
         output_dir = Path(self.app.config["OUTPUT_DIR"])
         remove_catalog_entry(name, output_dir, delete_files)
 
-        # Sacar el diálogo + el CatalogScreen viejo, reemplazar con uno fresco
-        self.app.pop_screen()  # cierra el diálogo ConfirmDelete
-        self.app.pop_screen()  # cierra este CatalogScreen viejo
+        # Reemplazar este CatalogScreen con uno fresco
+        # (push_screen callback ya cerró el diálogo, solo queda este screen arriba)
+        self.app.pop_screen()
         self.app.push_screen(CatalogScreen())
 
 
