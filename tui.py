@@ -376,6 +376,8 @@ class MainScreen(Screen):
         self._current_file = ""
         self._chat_name = ""
         self._batch_num = 0
+        self._continue_event: threading.Event | None = None
+        self._continue_response: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -747,6 +749,18 @@ class MainScreen(Screen):
                     self.app.call_from_thread(self._log, _ok("✓ Descarga completa."))
                     break
 
+                # ── Preguntar si continuar ──
+                if not self.app.settings.get("auto_continue", False):
+                    self._continue_event = threading.Event()
+                    self._continue_response = False
+                    self.app.call_from_thread(self._show_continue_dialog, engine.totals["ok"])
+                    self._continue_event.wait()
+                    if self.stop_requested:
+                        break
+                    if not self._continue_response:
+                        self.app.call_from_thread(self._log, _warn("⚑ Detenido por el usuario."))
+                        break
+
         except Exception as e:
             self.app.call_from_thread(self._on_download_error, str(e))
             return
@@ -830,6 +844,17 @@ class MainScreen(Screen):
             self.query_one("#btn-config").disabled = False
         except Exception:
             pass
+
+    def _show_continue_dialog(self, ok_count: int) -> None:
+        """Muestra el diálogo de continuar (llamado desde el worker thread vía call_from_thread)."""
+        dialog = ContinueDialog(self._batch_num, ok_count)
+
+        def _on_response(confirmed: bool) -> None:
+            self._continue_response = confirmed
+            if self._continue_event is not None:
+                self._continue_event.set()
+
+        self.app.push_screen(dialog, _on_response)
 
 
 # ── Pantalla de configuración ──
@@ -1099,6 +1124,45 @@ class ConfirmDelete(Screen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm")
+
+
+class ContinueDialog(Screen[bool]):
+    """Modal: preguntar si continuar descargando."""
+
+    def __init__(self, batch_num: int, ok_count: int) -> None:
+        super().__init__()
+        self.batch_num = batch_num
+        self.ok_count = ok_count
+
+    CSS = """
+    ContinueDialog {
+        align: center middle;
+    }
+    #cont-box {
+        width: 50;
+        height: auto;
+        border: thick $primary;
+        padding: 1 2;
+        background: $surface;
+    }
+    #cont-box Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="cont-box"):
+            yield Static(f"[bold]Lote {self.batch_num} completado[/]")
+            yield Static(f"Descargados: {fmt_count(self.ok_count)} archivos")
+            yield Static("")
+            yield Static("¿Continuar descargando más mensajes?")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Detener", id="stop", variant="error")
+                yield Button("Continuar", id="continue", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "continue")
 
 
 class CatalogScreen(Screen):
