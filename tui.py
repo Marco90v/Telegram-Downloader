@@ -378,6 +378,8 @@ class MainScreen(Screen):
         self._batch_num = 0
         self._continue_event: threading.Event | None = None
         self._continue_response: bool = False
+        self._resume_event: threading.Event | None = None
+        self._resume_choice: str = "resume"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -602,9 +604,22 @@ class MainScreen(Screen):
                     self._log,
                     _ok(f"↻ Sesión anterior: {pc} archivos (IDs {po}→{pn}, {pd})"),
                 )
-                self.app.call_from_thread(self._log, _ok("↻ Reanudando — solo contenido nuevo"))
-                resume_newest = pn
-                resume_oldest = po
+
+                # Preguntar cómo reanudar
+                self._resume_event = threading.Event()
+                self._resume_choice = "resume"
+                self.app.call_from_thread(self._show_resume_dialog, pc, pn, po, pd)
+                self._resume_event.wait()
+
+                if self._resume_choice == "resume":
+                    self.app.call_from_thread(self._log, _ok("↻ Reanudando — solo contenido nuevo"))
+                    resume_newest = pn
+                    resume_oldest = po
+                else:
+                    self.app.call_from_thread(
+                        self._log, _warn("↻ Verificando todo — omitiendo duplicados")
+                    )
+                    # resume_newest/oldest se quedan en None → arranca desde cero
             else:
                 self.app.call_from_thread(
                     self._log, _warn("⚐ Sin sesión anterior — descarga completa")
@@ -853,6 +868,19 @@ class MainScreen(Screen):
             self._continue_response = confirmed
             if self._continue_event is not None:
                 self._continue_event.set()
+
+        self.app.push_screen(dialog, _on_response)
+
+    def _show_resume_dialog(
+        self, total_count: int, newest_id: int, oldest_id: int, last_date: str
+    ) -> None:
+        """Muestra el diálogo de reanudación (llamado desde el worker thread vía call_from_thread)."""
+        dialog = ResumeDialog(total_count, newest_id, oldest_id, last_date)
+
+        def _on_response(choice: str | None) -> None:
+            self._resume_choice = choice or "fresh"
+            if self._resume_event is not None:
+                self._resume_event.set()
 
         self.app.push_screen(dialog, _on_response)
 
@@ -1124,6 +1152,56 @@ class ConfirmDelete(Screen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm")
+
+
+class ResumeDialog(Screen[str]):
+    """Modal: preguntar cómo reanudar al iniciar descarga."""
+
+    def __init__(self, total_count: int, newest_id: int, oldest_id: int, last_date: str) -> None:
+        super().__init__()
+        self.total_count = total_count
+        self.newest_id = newest_id
+        self.oldest_id = oldest_id
+        self.last_date = last_date
+
+    CSS = """
+    ResumeDialog {
+        align: center middle;
+    }
+    #resume-box {
+        width: 60;
+        height: auto;
+        border: thick $primary;
+        padding: 1 2;
+        background: $surface;
+    }
+    #resume-box Button {
+        margin: 0 1;
+        min-width: 14;
+    }
+    .resume-info {
+        padding: 0;
+        margin: 0 0 1 0;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="resume-box"):
+            yield Static("[bold]Sesión anterior encontrada[/]")
+            yield Static(
+                f"  {self.total_count} archivos  (IDs {self.oldest_id}→{self.newest_id}, "
+                f"{self.last_date})",
+                classes="resume-info",
+            )
+            yield Static("")
+            yield Static("¿Qué querés hacer?")
+            yield Static("")
+            with Horizontal():
+                yield Button("Solo nuevo", id="resume", variant="primary")
+                yield Button("Verificar todo", id="fresh", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id)
 
 
 class ContinueDialog(Screen[bool]):
