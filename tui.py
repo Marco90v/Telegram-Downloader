@@ -1201,7 +1201,7 @@ class CatalogScreen(Screen):
     def _show_confirm(self, safe: str, btn: Button) -> None:
         """Reemplaza el botón Borrar por confirmación."""
         parent = btn.parent  # Horizontal.catalog-confirm
-        parent.remove_all()
+        parent.clear()
         parent.mount(
             Static("¿Borrar", classes="catalog-name"),
             Switch(id=f"files-{safe}", value=False),
