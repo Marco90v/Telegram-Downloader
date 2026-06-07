@@ -1148,6 +1148,10 @@ class CatalogScreen(Screen):
 
     def _build_catalog(self, msg: str | None = None) -> None:
         """(Re)construye la lista de entradas."""
+        self.set_timer(0, lambda: self._rebuild_entries(msg))
+
+    def _rebuild_entries(self, msg: str | None = None) -> None:
+        """Llamado desde set_timer para que las operaciones DOM funcionen."""
         box = self.query_one("#catalog-box", Vertical)
         # Limpiar todo excepto el título
         for child in list(box.children):
