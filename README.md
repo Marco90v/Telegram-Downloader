@@ -4,6 +4,14 @@ Descarga masiva de fotos y videos de grupos/canales de Telegram.
 
 Dos interfaces: **CLI** (ANSI, liviana) y **TUI** (Textual, interactiva).
 
+## Quick start
+
+```bash
+cp .env.example .env         # completá con tus datos de my.telegram.org
+./run.sh                     # arranca en modo CLI
+./run.sh --tui               # o en modo TUI (si instalaste textual)
+```
+
 ## Requisitos
 
 - Python 3.10+
@@ -17,6 +25,11 @@ cd descarga
 python -m venv venv
 venv/bin/pip install -r requirements.txt
 ```
+
+> La TUI (Textual) requiere `textual>=8.0`. Si solo usás la CLI, podés instalar solo `telethon`:
+> ```bash
+> venv/bin/pip install telethon
+> ```
 
 ## Configuración
 
@@ -88,14 +101,9 @@ Flujo:
 #### Comandos de catálogo (CLI)
 
 ```bash
-# Listar chats con sesión guardada
-python descarga.py --catalog list
-
-# Eliminar una entrada del catálogo
-python descarga.py --catalog remove <chat_key>
-
-# Eliminar entrada + borrar archivos descargados
-python descarga.py --catalog remove <chat_key> --delete-files
+./run.sh --catalog list                          # listar
+./run.sh --catalog remove "Nombre del chat"      # eliminar entrada
+./run.sh --catalog remove "Nombre" --delete-files # eliminar + archivos
 ```
 
 #### Atajos de teclado (CLI)
@@ -108,15 +116,15 @@ python descarga.py --catalog remove <chat_key> --delete-files
 
 ---
 
-### TUI (tui.py)
+### TUI (Textual)
 
 ```bash
 ./run.sh --tui
 # o directamente:
-python tui.py
+python -m tui
 ```
 
-> **Requiere:** `pip install textual>=8.0`
+> **Requiere:** `pip install textual>=8.0` (incluido en `requirements.txt`)
 
 Interfaz gráfica en terminal con 3 paneles, teclas rápidas y diálogos modales.
 
@@ -212,10 +220,9 @@ No requiere mantenimiento manual. Si borrás los archivos del disco y querés de
 ```bash
 pip install -r requirements.txt      # instala dependencias + herramientas dev
 pre-commit install                    # activa hooks de Ruff al hacer commit
-ruff check tui.py descarga.py core.py                # lint
-ruff check tui.py descarga.py core.py --fix          # lint + auto-fix
-ruff format tui.py descarga.py core.py               # formatear código
-pip install -e .                      # instalación editable (opcional)
+ruff check descarga.py core/ tui/ format/           # lint
+ruff check descarga.py core/ tui/ format/ --fix     # lint + auto-fix
+ruff format descarga.py core/ tui/ format/          # formatear código
 ```
 
 El proyecto usa [Ruff](https://astral.sh/ruff) como linter y formatter, con pre-commit hooks que verifican automáticamente antes de cada commit. Configuración en `pyproject.toml`.
@@ -223,9 +230,20 @@ El proyecto usa [Ruff](https://astral.sh/ruff) como linter y formatter, con pre-
 ### Arquitectura
 
 ```
-core.py          → Motor compartido: conexión, descarga, catálogo, contadores
-descarga.py      → Interfaz CLI: prompts interactivos, barras ANSI
-tui.py           → Interfaz TUI: pantallas, diálogos modales, progreso visual
+descarga.py      → Interfaz CLI: prompts, colores ANSI (vía format/)
+core/            → Motor compartido: conexión, descarga, catálogo, contadores
+  config.py        Carga de .env / settings.json
+  catalog.py       Catálogo persistente (catalog.json)
+  media.py         Utilidades de medios (tamaño, extensión, rutas)
+  telegram.py      Resolución de chats, conteo de medios
+  download.py      Descarga individual con reintento FloodWait
+  engine.py        Orquestación de descarga batch
+tui/             → Interfaz TUI: pantallas, diálogos modales
+  app.py           TUIApp (punto de entrada)
+  screens/         Login, Principal, Config, Catálogo, Diálogos
+format/          → Formateo compartido
+  ansi.py          Colores ANSI para CLI
+  textual.py       Markup Textual para TUI
 ```
 
-Ambas interfaces usan `core.py` como backend. Los comandos de catálogo (`--catalog list/remove`) también funcionan desde CLI.
+**CLI** y **TUI** comparten el mismo motor (`core/`) y formato (`format/`). Los comandos de catálogo (`--catalog list/remove`) funcionan desde CLI.
