@@ -1062,6 +1062,45 @@ class ConfigScreen(Screen):
 # ── Pantalla de gestión del catálogo ──
 
 
+class ConfirmDelete(Screen[bool]):
+    """Modal de confirmación para borrar una entrada del catálogo."""
+
+    def __init__(self, chat_name: str, also_files: bool) -> None:
+        super().__init__()
+        self.chat_name = chat_name
+        self.also_files = also_files
+
+    CSS = """
+    ConfirmDelete {
+        align: center middle;
+    }
+    #confirm-box {
+        width: 50;
+        height: auto;
+        border: thick $error;
+        padding: 1 2;
+        background: $surface;
+    }
+    #confirm-box Button {
+        margin: 0 1;
+        min-width: 12;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-box"):
+            yield Static(f"[bold]¿Borrar '{self.chat_name}' del catálogo?[/]")
+            if self.also_files:
+                yield Static("[red]La carpeta de descargas también se eliminará.[/]")
+            yield Static("[dim]Esta acción no se puede deshacer.[/]")
+            with Horizontal(classes="confirm-buttons"):
+                yield Button("Cancelar", id="cancel", variant="primary")
+                yield Button("Borrar", id="confirm", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm")
+
+
 class CatalogScreen(Screen):
     """Lista los chats del catálogo y permite borrarlos."""
 
@@ -1076,7 +1115,6 @@ class CatalogScreen(Screen):
     CatalogScreen {
         align: center top;
     }
-
     #catalog-box {
         width: 100%;
         max-width: 80;
@@ -1086,44 +1124,38 @@ class CatalogScreen(Screen):
         padding: 0 1;
         margin: 0;
     }
-
     #catalog-title {
         text-style: bold;
         padding: 0;
         margin: 0 0 1 0;
     }
-
     .catalog-entry {
         height: auto;
-        padding: 0;
+        padding: 0 1;
         margin: 0 0 1 0;
         border: solid $primary 30%;
     }
-
     .catalog-name {
         text-style: bold;
         padding: 0;
         margin: 0;
     }
-
     .catalog-info {
         padding: 0;
         margin: 0;
     }
-
-    .catalog-confirm {
-        height: auto;
+    .catalog-actions {
+        height: 3;
+        align: center middle;
         padding: 0;
         margin: 0;
     }
-
     #catalog-controls {
         height: 3;
         align: center middle;
         padding: 0;
         margin: 0;
     }
-
     CatalogScreen Button {
         margin: 0 1;
         min-width: 12;
@@ -1132,76 +1164,37 @@ class CatalogScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._chat_map: dict[str, str] = {}  # id_safe -> nombre_original
-        self._confirming: set[str] = set()  # safes en modo confirmación
+        self._chat_map: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="catalog-box"):
             yield Static("[bold cyan]Catálogo de descargas[/]", id="catalog-title")
+            catalog = list_catalog()
+            chats = catalog.get("chats", {})
+            if not chats:
+                yield Static("[yellow]No hay chats en el catálogo.[/]")
+            else:
+                self._chat_map.clear()
+                for name in sorted(chats.keys()):
+                    info = chats[name]
+                    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+                    self._chat_map[safe] = name
+                    with Vertical(classes="catalog-entry"):
+                        yield Static(name, classes="catalog-name")
+                        yield Static(
+                            f"  Procesados: {info.get('total_count', '?')}  "
+                            f"({info.get('oldest_id', '?')}→{info.get('newest_id', '?')})  "
+                            f"Última descarga: {info.get('last_date', '?')}",
+                            classes="catalog-info",
+                        )
+                        with Horizontal(classes="catalog-actions"):
+                            yield Label("Borrar carpeta:")
+                            yield Switch(id=f"del-files-{safe}", value=False)
+                            yield Button("🗑  Borrar", id=f"del-{safe}", variant="error")
         with Horizontal(id="catalog-controls"):
             yield Button("Volver", id="btn-back", variant="primary")
         yield Footer()
-
-    def on_mount(self) -> None:
-        self._build_catalog()
-
-    def _build_catalog(self, msg: str | None = None) -> None:
-        """(Re)construye la lista de entradas."""
-        coro = self._rebuild_entries(msg)
-        self.set_timer(0, coro)
-
-    async def _rebuild_entries(self, msg: str | None = None) -> None:
-        """Llamado desde set_timer para que las operaciones DOM funcionen."""
-        box = self.query_one("#catalog-box", Vertical)
-        # Limpiar todo excepto el título
-        for child in list(box.children):
-            if child.id != "catalog-title":
-                await child.remove()
-
-        catalog = list_catalog()
-        chats = catalog.get("chats", {})
-
-        if msg:
-            await box.mount(Static(msg, id="catalog-status"))
-
-        if not chats:
-            await box.mount(Static("[yellow]No hay chats en el catálogo.[/]"))
-            return
-
-        self._chat_map.clear()
-        for name in sorted(chats.keys()):
-            info = chats[name]
-            safe = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
-            self._chat_map[safe] = name
-
-            if safe in self._confirming:
-                actions = Horizontal(
-                    Static("¿Borrar", classes="catalog-name"),
-                    Switch(id=f"files-{safe}", value=False),
-                    Static("también carpeta?", classes="catalog-info"),
-                    Button("✓ Sí", id=f"confirm-{safe}", variant="error"),
-                    Button("✗ No", id=f"cancel-{safe}", variant="default"),
-                    classes="catalog-confirm",
-                )
-            else:
-                actions = Horizontal(
-                    Button("🗑  Borrar", id=f"del-{safe}"),
-                    classes="catalog-confirm",
-                )
-
-            entry = Vertical(
-                Static(name, classes="catalog-name"),
-                Static(
-                    f"  Procesados: {info.get('total_count', '?')}  "
-                    f"({info.get('oldest_id', '?')}→{info.get('newest_id', '?')})  "
-                    f"Última descarga: {info.get('last_date', '?')}",
-                    classes="catalog-info",
-                ),
-                actions,
-                classes="catalog-entry",
-            )
-            await box.mount(entry)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
@@ -1210,35 +1203,30 @@ class CatalogScreen(Screen):
             self.app.pop_screen()
         elif bid.startswith("del-"):
             safe = bid[4:]
-            self._confirming.add(safe)
-            self._build_catalog()
-        elif bid.startswith("confirm-"):
-            safe = bid[8:]
-            self._confirming.discard(safe)
-            self._do_delete(safe)
-        elif bid.startswith("cancel-"):
-            safe = bid[8:]
-            self._confirming.discard(safe)
-            self._build_catalog()
+            name = self._chat_map.get(safe, safe)
 
-    def _do_delete(self, safe: str) -> None:
-        """Ejecuta la eliminación."""
+            try:
+                switch = self.query_one(f"#del-files-{safe}", Switch)
+                delete_files = switch.value
+            except Exception:
+                delete_files = False
+
+            confirm = ConfirmDelete(name, delete_files)
+            self.app.push_screen(
+                confirm, lambda ok: self._on_delete_confirm(ok, safe, delete_files)
+            )
+
+    def _on_delete_confirm(self, ok: bool, safe: str, delete_files: bool) -> None:
+        if not ok:
+            return
+
         name = self._chat_map.get(safe, safe)
-        try:
-            switch = self.query_one(f"#files-{safe}", Switch)
-            delete_files = switch.value
-        except Exception:
-            delete_files = False
-
         output_dir = Path(self.app.config["OUTPUT_DIR"])
-        ok = remove_catalog_entry(name, output_dir, delete_files)
-        if ok:
-            msg = f"[green]✓ '{name}' eliminado del catálogo.[/]"
-            if delete_files:
-                msg = f"[green]✓ '{name}' eliminado (carpeta borrada).[/]"
-        else:
-            msg = f"[red]✗ No se encontró '{name}'.[/]"
-        self._build_catalog(msg)
+        remove_catalog_entry(name, output_dir, delete_files)
+
+        # Reemplazar con una instancia fresca (recarga la lista)
+        self.app.pop_screen()
+        self.app.push_screen(CatalogScreen())
 
 
 # ── App ──
